@@ -36,7 +36,13 @@ for ((i = $(rank "$host") - 1; i >= 0; i--)); do   # every level below the host'
 done
 
 if command -v qemu-x86_64 >/dev/null; then
-    for cpu in Nehalem:SSE4.2 Haswell:AVX2; do
+    # qemu emulates AVX only from version 7.2: an older one presents Haswell without it, so SSE4.2 is right there.
+    qemu=$(qemu-x86_64 --version | sed -n 's/.*version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+    haswell=AVX2
+    if [[ -n "$qemu" ]] && (( ${qemu% *} < 7 || (${qemu% *} == 7 && ${qemu#* } < 2) )); then
+        haswell=SSE4.2; echo "(qemu ${qemu% *}.${qemu#* } has no AVX: Haswell is emulated without it)"
+    fi
+    for cpu in Nehalem:SSE4.2 Haswell:$haswell; do
         n=$(nodes qemu-x86_64 -cpu "${cpu%%:*}" ./tsumi-universal)
         got=$(level qemu-x86_64 -cpu "${cpu%%:*}" ./tsumi-universal)
         printf "%-18s %s kernels, %s nodes\n" "qemu ${cpu%%:*}:" "$got" "$n"

@@ -10,11 +10,16 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
-      contents: write   # the draft release
+      contents: write
     steps:
       - uses: actions/checkout@v4
+      - name: Check the scripts are executable
+        run: |
+          for f in tools/pipeline.sh tests/*.sh; do
+              test -x "$f" || { echo "$f is not executable in git: git update-index --chmod=+x $f"; exit 1; }
+          done
       - name: Install the Windows cross-compiler, qemu and python-chess
         run: |
           sudo apt-get update
@@ -22,9 +27,9 @@ jobs:
           python3 -m pip install --upgrade chess ruff
       - name: Build
         run: |
-          make -j universal LDFLAGS="-static -pthread -flto=auto"   # static: runs on any Linux
+          make -j universal LDFLAGS="-static -pthread -flto=auto"
           make -j windows
-          cp tsumi-universal tsumi   # the tests run ./tsumi
+          cp tsumi-universal tsumi
       - name: Get the network
         env:
           GH_TOKEN: ${{ github.token }}
@@ -62,7 +67,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then   # a re-run: replace the assets
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
               gh release upload --clobber "$GITHUB_REF_NAME" dist/*
           else
               gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Tsumi ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
