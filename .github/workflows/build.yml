@@ -19,9 +19,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check the scripts are executable
         run: |
-          for f in tools/pipeline.sh tests/*.sh; do
-              test -x "$f" || { echo "$f is not executable in git: git update-index --chmod=+x $f"; exit 1; }
-          done
+          while read -r f; do
+              test -x "$f" || { echo "$f has a shebang but is not executable in git: git update-index --chmod=+x $f"; exit 1; }
+          done < <(grep -ls '^#!' tools/* tests/* train/*)
       - name: Install the Windows cross-compiler, qemu and python-chess
         run: |
           sudo apt-get update
