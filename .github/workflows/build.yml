@@ -51,8 +51,8 @@ jobs:
           win=tsumi-$version-windows-x86-64
           linux=tsumi-$version-linux-x86-64
           mkdir -p dist "$win" "$linux"
-          cp tsumi.exe "$win/$win.exe" && cp "$net" "$win/"
-          cp tsumi-universal "$linux/$linux" && cp "$net" "$linux/"
+          cp tsumi.exe "$win/" && cp "$net" "$win/"
+          cp tsumi-universal "$linux/tsumi" && cp "$net" "$linux/"
           zip -qr "dist/$win.zip" "$win"
           tar czf "dist/$linux.tar.gz" "$linux"
           (cd dist && sha256sum -- * > SHA256SUMS)
