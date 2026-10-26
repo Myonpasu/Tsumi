@@ -379,7 +379,7 @@ int datagen_main(int argc, char** argv) {
         "                     [--random-move-pct P] [--random-move-minply N] [--random-move-maxply N]\n"
         "                     [--random-multi-pv N] [--random-multi-pv-diff D]\n"
         "                     [--adj-draw-minply N] [--adj-draw-score D] [--adj-draw-plies N]\n"
-        "Plays self-play games and writes training records (README: Data generation).  --net defaults to the engine's own\n"
+        "Plays self-play games and writes training records (docs/training.md).  --net defaults to the engine's own\n"
         "network (src/nnue.h); the other defaults are in src/datagen.h.\n";
     for (OptionParser p{argc, argv}; p.i < argc; ++p.i) {
         const std::string a = argv[p.i];

@@ -5,8 +5,11 @@
 
 Copies the network, and the .pt checkpoint beside it if there is one, to DIR (default: the current directory) under
 that name, and prints their SHA-256 sums.  --set-default makes it the engine's default network (NNUE::DEFAULT_NET
-in src/nnue.h), the one `make net` downloads and a release ships.  Then upload both files to the "networks" release
-(README: Releasing).
+in src/nnue.h), the one `make net` downloads and a release ships.  Then upload both files to the "networks" release,
+a pre-release so that it never counts as the latest:
+
+    gh release upload networks tsumi-*.nnue*
+    gh release create networks --prerelease --title Networks --notes "Tsumi's networks" tsumi-*.nnue*   # the first time
 """
 import argparse
 import hashlib

@@ -1,5 +1,7 @@
 # Builds and tests Tsumi on every push and pull request.  On a tag v<version> it also packages the Windows and
-# Linux executables with the network and drafts the release for the notes to be written (README: Releasing).
+# Linux executables with the network and drafts the release, for its notes to be written and published.  To
+# release: publish the network if it is new (tools/release_net.py), set VERSION in src/uci.cpp, commit, and push
+# the tag.
 name: build
 on:
   push:
