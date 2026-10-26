@@ -1,12 +1,12 @@
-# Builds and tests Tsumi on every push and pull request.  On a tag v<version> it also packages the Windows and
-# Linux executables with the network and drafts the release, for its notes to be written and published.  To
-# release: publish the network if it is new (tools/release_net.py), set VERSION in src/uci.cpp, commit, and push
-# the tag.
+# Builds and tests Tsumi on every push and pull request.  On a tag <version>, such as 1.0, it also packages the
+# Windows and Linux executables with the network and drafts the release "Tsumi <version>", for its notes to be
+# written and published.  To release: publish the network if it is new (tools/release_net.py), set VERSION in
+# src/uci.cpp, commit, and push the tag.
 name: build
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    tags: ['[0-9]*']
   pull_request:
   workflow_dispatch:
 
@@ -16,7 +16,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Check the scripts are executable
         run: |
           while read -r f; do
@@ -25,7 +25,7 @@ jobs:
       - name: Install the Windows cross-compiler, qemu and python-chess
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mingw-w64 qemu-user
+          sudo apt-get install -y --no-install-recommends g++-mingw-w64-x86-64-posix qemu-user
           python3 -m pip install --upgrade chess ruff
       - name: Build
         run: |
@@ -42,9 +42,9 @@ jobs:
           tests/universal.sh
           ruff check .
       - name: Package
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref_type == 'tag'
         run: |
-          version=${GITHUB_REF_NAME#v}
+          version=$GITHUB_REF_NAME
           ./tsumi-universal uci quit | grep -qx "id name Tsumi $version" ||
               { echo "the tag $GITHUB_REF_NAME does not match VERSION in src/uci.cpp"; exit 1; }
           net=$(ls tsumi-*.nnue)
@@ -65,12 +65,12 @@ jobs:
             echo "- Runs on any x86-64 CPU with SSE4.2 and POPCNT (Intel since 2008, AMD since 2011) and uses AVX2 or AVX-512 when the CPU has them."
           } > notes.md
       - name: Draft the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
               gh release upload --clobber "$GITHUB_REF_NAME" dist/*
           else
-              gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Tsumi ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
+              gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Tsumi $GITHUB_REF_NAME" --notes-file notes.md dist/*
           fi

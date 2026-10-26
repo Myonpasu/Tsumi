@@ -20,7 +20,7 @@
 
 namespace {
 
-constexpr char VERSION[] = "1.0";   // a release is tagged v<VERSION>
+constexpr char VERSION[] = "1.0";   // a release is tagged <VERSION>
 
 struct UciState {
     Engine engine;
