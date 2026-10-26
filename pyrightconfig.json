@@ -1,0 +1,11 @@
+{
+  // Type checking for the Python code (train/, tools/, tests/).  Pyright and VS Code's Pylance read this file.
+  // The checks pass in "standard" mode; the scripts import each other as plain modules, hence extraPaths.
+  "include": ["train", "tools", "tests"],
+  "exclude": ["**/__pycache__", "venv", ".venv", "data", "nets", "logs"],
+  "extraPaths": ["train", "tools"],
+  "typeCheckingMode": "standard",
+  // The interpreter with numpy, torch and python-chess installed: a venv called ".venv" in this folder.
+  "venvPath": ".",
+  "venv": ".venv"
+}

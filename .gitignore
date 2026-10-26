@@ -1,0 +1,34 @@
+# Build outputs
+build*/
+dist/
+/tsumi
+/tsumi-*
+*.exe
+*.o
+*.d
+train/libfeat.so
+
+# Networks, checkpoints and training runs (large: networks are published as release assets)
+*.nnue
+*.pt
+*.tmp
+data/
+logs/
+nets/
+books/
+*.pgn
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Editors and language servers (clangd keeps its index in .cache/)
+.vscode/
+.idea/
+.cache/
+compile_commands.json

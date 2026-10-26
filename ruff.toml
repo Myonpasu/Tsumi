@@ -1,0 +1,5 @@
+# Ruff, the linter for the Python code (`ruff check` in the repository root; editors with Ruff read this file too).
+# The scripts in train/ and tools/ import their neighbours as plain modules (as in pyrightconfig.json), so those
+# folders count as first-party code when imports are sorted.
+line-length = 120
+src = [".", "train", "tools"]

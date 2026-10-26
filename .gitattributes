@@ -1,0 +1,4 @@
+# Normalise line endings; the shell scripts and the Makefile keep LF even in a Windows checkout.
+* text=auto
+*.sh text eol=lf
+Makefile text eol=lf
