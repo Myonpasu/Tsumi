@@ -25,7 +25,6 @@ W0_CLAMP, W1_CLAMP, W2_CLAMP = 127.0 / HEAD_W0SCALE, 127.0 / HEAD_WSCALE, 32767.
 L2 = L3 = 32                      # widths of the head's hidden layers
 
 MAGIC = b"TSUMINET"
-OLD_MAGIC = b"ICARUSNN"           # the project's working name, in the files of earlier versions
 FORMAT_VERSION = 4
 # The header after the magic (src/nnue.cpp): format version, H, NB, output buckets, QA, 64 (unused), SCALE, L2, L3,
 # then the fixed values 1, 32 (HEAD_EXTRAS), 1, 1.
@@ -187,7 +186,7 @@ def read_net(path):
     """A network file as a dict of numpy arrays (see write_net)."""
     with open(path, "rb") as f:
         data = f.read()
-    if data[:8] not in (MAGIC, OLD_MAGIC) or len(data) < 8 + HEADER.size:
+    if data[:8] != MAGIC or len(data) < 8 + HEADER.size:
         raise ValueError(f"{path} is not a Tsumi network")
     hdr = HEADER.unpack_from(data, 8)
     if hdr[0] != FORMAT_VERSION or hdr[3] != OUTPUT_BUCKETS or hdr[4] != QA or hdr[9:] != (1, HEAD_EXTRAS, 1, 1):

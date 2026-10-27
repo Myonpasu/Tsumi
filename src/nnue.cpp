@@ -29,7 +29,7 @@ bool read_vec(std::ifstream& in, V& v, size_t n) {
 }  // namespace
 
 // The network file, little-endian:
-//   magic      8 bytes "TSUMINET" ("ICARUSNN", the project's working name, in earlier files)
+//   magic      8 bytes "TSUMINET"
 //   header     13 x uint32: format version (4), H, NB (king buckets), output buckets (16), QA (255), 64 (unused),
 //              SCALE, L2, L3, then the fixed values 1, 32 (HEAD_EXTRAS), 1, 1
 //   kingBucket 64 bytes
@@ -47,7 +47,7 @@ bool Network::load(const std::string& file, std::string* err) {
     uint32_t hdr[13];
     in.read(magic, 8);
     in.read(reinterpret_cast<char*>(hdr), sizeof(hdr));
-    if (!in || (std::memcmp(magic, "TSUMINET", 8) != 0 && std::memcmp(magic, "ICARUSNN", 8) != 0))
+    if (!in || std::memcmp(magic, "TSUMINET", 8) != 0)
         return fail(file + " is not a Tsumi network");
     if (hdr[0] != 4) return fail(file + " has format version " + std::to_string(hdr[0]) + " (this engine reads version 4)");
     if (hdr[3] != OUTPUT_BUCKETS || hdr[4] != QA || hdr[9] != 1 || hdr[10] != HEAD_EXTRAS || hdr[11] != 1 || hdr[12] != 1)
