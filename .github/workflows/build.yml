@@ -55,7 +55,6 @@ jobs:
           cp tsumi-universal "$linux/tsumi" && cp "$net" "$linux/"
           zip -qr "dist/$win.zip" "$win"
           tar czf "dist/$linux.tar.gz" "$linux"
-          (cd dist && sha256sum -- * > SHA256SUMS)
           bench=$(./tsumi-universal "setoption name EvalFile value $net" "bench 13" | awk '/Nodes searched/ {print $NF}')
           {
             echo "Tsumi $version, a selfmate chess engine (UCI)."
