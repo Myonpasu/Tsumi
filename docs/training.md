@@ -39,7 +39,7 @@ interrupted training or match starts again. Deleting a phase's product redoes it
 `nets/gen(N+1).nnue` to train generation *N*'s candidate again (and play its match), or `logs/match_genN.log`
 to play the match again. If the deleted candidate had been accepted, the loop stops and says which network
 to put back as the best first. Logs go to `logs/` (`datagen_genN.log`, `calibrate_genN.log`,
-`train_genN.log`, `match_genN.log` and its PGN), and every generation ends with a summary.
+`train_genN.log`, and `match_genN.log` and its PGN), and every generation ends with a summary.
 
 The settings are environment variables:
 
@@ -81,11 +81,11 @@ python3 tools/gen_book.py --count 20000 --random-share 50 --out data/gen0/book.e
 ```
 
 Each game starts from the start position or, with `--book`, from the next position of the book (taken in a
-random order, each once, as described under [opening books](#opening-books)). The engine plays at about `--nodes` nodes per
-move (each search gets 80–120% of it). Every position the search scores is a candidate for recording, except
-positions in check or whose best move is a capture (their scores are tactical), positions before
-`--write-min-ply`, and positions already recorded in this run. A record holds the position, the search score
-and, once the game ends, its result.
+random order, each once, as described under [opening books](#opening-books)). The engine plays at about
+`--nodes` nodes per move (each search gets 80–120% of it). Every position the search scores is a candidate for
+recording, except positions in check or whose best move is a capture (their scores are tactical), positions
+before `--write-min-ply`, and positions already recorded in this run. A record holds the position, the search
+score, and, once the game ends, its result.
 
 **Random moves.** On `--random-move-pct` % of the plies from `--random-move-minply` to
 `--random-move-maxply` − 1, a second search with `--random-multi-pv` lines picks one of the moves within
@@ -106,7 +106,7 @@ output is appended to. `tsumi datagen --help` lists every option, and the defaul
 
 A book is a file with a FEN or an EPD line per position (EPD operations after the four position fields are
 ignored), or a PGN file of opening lines, each game played to its end. The pipeline's `BOOK` and
-`MATCH_BOOK`, `tools/gen_book.py --base` and `tools/match.py --book` read both, plain or in a .zip, as the
+`MATCH_BOOK`, `tools/gen_book.py --base`, and `tools/match.py --book` read both, plain or in a .zip, as the
 books of the [Stockfish books repository](https://github.com/official-stockfish/books) come.
 `tsumi datagen --book` reads a plain FEN/EPD file, which is what the pipeline hands it. Entries without a
 position a game can start from are left out, and the tools say how many. Datagen takes a book's positions in

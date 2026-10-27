@@ -29,7 +29,7 @@ threat features ───────┘                                        
   side to move's legal-move count (0–1, 2–4, 5–11, 12 or more), so a side that is forced and a side that is
   free are evaluated by different weights.
 - **Integer inference.** The engine computes in integers (int8 and int16 weights, int16 accumulators), with
-  vector kernels for SSE4.2, AVX2, AVX-512 and AVX-512 VNNI, and a sparse first layer that skips the groups of
+  vector kernels for SSE4.2, AVX2, AVX-512, and AVX-512 VNNI, and a sparse first layer that skips the groups of
   products that are all zero. `train/verify_net.py` checks that the engine's evaluations equal a numpy
   implementation's bit for bit.
 
@@ -42,7 +42,7 @@ for the side to move, whatever the scale of the search scores it was trained on,
 ## Network file
 
 `src/nnue.cpp` describes the format: an 8-byte magic (`TSUMINET`), a header of 13 uint32 values (format
-version 4, the dimensions and the scale), the king-bucket table, and the weights. The engine reads the
+version 4, the dimensions, and the scale), the king-bucket table, and the weights. The engine reads the
 dimensions from the file, so networks of other widths load without recompiling. The units of a network
 written by the trainer are ordered for the sparse first layer (`train/ftperm.py`), which changes no
 evaluation.

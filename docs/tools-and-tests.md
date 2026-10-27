@@ -4,7 +4,7 @@ trainer also needs numpy and torch (`requirements.txt`).
 | | |
 |---|---|
 | `tools/pipeline.sh` | the training loop ([Training](training.md)) |
-| `tools/match.py` | engine against engine under selfmate rules: random, book or mixed openings played with both colours, fixed nodes, depth or a time control, concurrency, PGN, Elo with its error bar; `--e2 random` plays a random mover |
+| `tools/match.py` | engine against engine under selfmate rules: random, book, or mixed openings played with both colours, fixed nodes, depth, or a time control, concurrency, PGN, Elo with its error bar; `--e2 random` plays a random mover |
 | `tools/play.py` | play against the engine in the terminal (SAN or UCI moves, `hint`, `undo`) |
 | `tools/make_puzzles.py`, `tools/puzzles.py` | make selfmate puzzles with an independent python-chess solver, and check that the engine solves them |
 | `tools/gen_book.py` | opening books for datagen: random-play positions, with the start position or positions drawn from another book |

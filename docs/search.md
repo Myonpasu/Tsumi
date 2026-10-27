@@ -1,5 +1,5 @@
 Tsumi's search is an alpha-beta search of the usual kind: iterative deepening with aspiration windows and
-principal variation search, a hash table, killer, counter-move, history and continuation-history move
+principal variation search, a hash table, killer, counter-move, history, and continuation-history move
 ordering, late move reductions and pruning, futility and reverse futility pruning, internal iterative
 reductions, and lazy SMP for several threads. The parts specific to selfmate:
 
@@ -10,7 +10,7 @@ reductions, and lazy SMP for several threads. The parts specific to selfmate:
 - **No null-move pruning.** Zugzwang is the whole game, and null-move pruning assumes there is none.
 - **Forcing moves first.** Checks are searched right after captures and reduced less than quiet moves, and a
   position with a single legal move is extended.
-- **Quiescence search** covers captures, promotions, quiet checks at its first ply and every evasion when in
+- **Quiescence search** covers captures, promotions, quiet checks at its first ply, and every evasion when in
   check. Capture and check sequences can run very deep in this game, so it is bounded: losing captures are
   skipped, after its fifth ply only recaptures are searched, and after its tenth a node not in check stands
   pat.

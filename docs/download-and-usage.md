@@ -21,7 +21,7 @@ from source.
 Any UCI chess GUI can run Tsumi. Instructions for particular GUIs follow below.
 
 Whatever the GUI, it plays ordinary chess, and so scores a checkmate as a win for the side that delivered it,
-which in selfmate is the side that lost. The board, the legal moves and the draws are the same as in chess, so
+which in selfmate is the side that lost. The board, the legal moves, and the draws are the same as in chess, so
 everything else works as usual, and only the announced winner is reversed. A GUI also does not adjudicate a
 bare king as a draw. Tsumi plays such positions towards a stalemate.
 
@@ -32,8 +32,8 @@ Tsumi starts with a 64 MB hash table and one thread. The GUI's engine settings s
 
 1. Open **Engines** in the sidebar and click **Add New**.
 2. On the **Local** tab, click **Binary file**, select the Tsumi executable (`tsumi-windows-x86-64.exe` or
-   `tsumi-linux-x86-64`) and click **Add**. The name is taken from the engine.
-3. To play, choose **Play Chess** on the home page, pick Tsumi as the opponent, set the time control and start
+   `tsumi-linux-x86-64`), and click **Add**. The name is taken from the engine.
+3. To play, choose **Play Chess** on the home page, pick Tsumi as the opponent, set the time control, and start
    the game. For analysis, enable Tsumi in the analysis board. Its settings are under **Engine Settings**, in
    the Engines tab or in the analysis board.
 

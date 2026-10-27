@@ -15,7 +15,7 @@ On Windows itself, build in an MSYS2 MINGW64 shell with `make` or `make universa
 ## CPU support
 
 Only the network code benefits measurably from newer instruction sets, so the universal build compiles just
-that code four times, for SSE4.2, AVX2, AVX-512 and AVX-512 VNNI, and picks the best set the CPU supports at
+that code four times, for SSE4.2, AVX2, AVX-512, and AVX-512 VNNI, and picks the best set the CPU supports at
 startup (the banner says which). All four give identical results. `TSUMI_ISA=avx2` (or `sse4.2`, `avx512`)
 forces a lower set for testing. A build for a specific CPU (`make`, `make windows-avx512`) prints what is
 missing and exits on a CPU that lacks its instructions.
@@ -34,7 +34,7 @@ every published one is an asset of the
 [networks release](https://github.com/Myonpasu/Tsumi/releases/tag/networks), with its training checkpoint
 beside it. The engine's own network is `NNUE::DEFAULT_NET` in `src/nnue.h`, and the release archives include it.
 Tsumi loads it from its working directory or from the executable's directory, and the `EvalFile` option
-names another file. Without a network the engine still answers `uci`, `perft` and the like, but exits when
+names another file. Without a network the engine still answers `uci`, `perft`, and the like, but exits when
 asked to search.
 
 ## Checking the build
