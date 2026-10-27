@@ -1,6 +1,6 @@
 Training is a loop: the best network plays games against itself, a candidate is trained on them, starting
 from the best network, and a match decides whether the candidate replaces it. `tools/pipeline.sh` runs the
-loop; the pieces can also be run by hand.
+loop; the pieces can also be run manually.
 
 ## Setup
 
@@ -134,7 +134,7 @@ itself (a deterministic engine would play the same game over and over).
 (`MATCH_RANDOM_SHARE` sets the other half's share), so that the match also covers the kind of opening the
 engine meets in real games, while the random openings keep the decisive games coming. The match book need
 not be the training book: a different one tests the candidate on openings its training data never started
-from. `tools/match.py --book FILE --book-share P` does the same by hand.
+from. `tools/match.py --book FILE --book-share P` does the same manually.
 
 ## The trainer
 

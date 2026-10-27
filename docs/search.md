@@ -22,4 +22,4 @@ reductions, and lazy SMP for several threads. The parts specific to selfmate:
   repeat), and at the root a stalemate on the board is preferred to a draw further ahead.
 
 The search's scores are in millipawns internally and reported in centipawns; `score mate N` is a forced
-selfmate in N moves ([Using the engine](using-the-engine.md)).
+selfmate in N moves ([Options and commands](options-and-commands.md)).

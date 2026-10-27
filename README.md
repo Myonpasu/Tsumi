@@ -1,19 +1,24 @@
 # Tsumi
 
 Tsumi is a chess engine for **selfmate chess**: ordinary chess rules, except that the player who gets
-**checkmated wins**. (*Tsumi*, 詰み, is the shogi word for checkmate.)
+checkmated wins. (*Tsumi* 詰み is the shogi word for checkmate.)
 
 Neither player will ever mate the other voluntarily, so the only way to win is to force it: leave the
-opponent no legal move but mating ones. The game is a contest of compulsion — checks, pins, single-reply
-positions, a king boxed in by its own pieces — and a normal engine playing its worst moves is no good at it,
-because it assumes an opponent who wants to win the ordinary way. Tsumi's search is built for forcing lines,
-and its NNUE evaluation is trained on its own self-play games with the training pipeline in this repository.
-The [documentation](docs) describes both in detail.
+opponent no legal move but mating ones. The game is a contest of compulsion, of checks, pins, single-reply
+positions and kings boxed in by their own pieces, and a normal engine playing its worst moves is no good at
+it, because it assumes an opponent who wants to win the ordinary way. Tsumi's search is built for forcing
+lines, and its NNUE evaluation is trained on its own self-play games with the training pipeline in this
+repository. The [documentation](docs) describes both in detail.
 
 ## Getting started
 
-The [releases](../../releases) have Windows and Linux executables with the network. To build from source
-(x86-64, g++ or clang with C++17):
+The [releases](../../releases) have Windows and Linux executables with the network. Tsumi is a UCI engine
+with no interface of its own, so it is used from a chess GUI such as
+[En Croissant](https://encroissant.org). Be aware that GUIs score a checkmate for the side that delivers it,
+the opposite of the selfmate result, so the winner a GUI announces is the player who lost.
+[Download and usage](docs/download-and-usage.md) walks through installing Tsumi, playing against it and reading its scores.
+
+To build from source instead (x86-64, g++ or clang with C++17):
 
 ```bash
 make -j              # ./tsumi, optimised for this machine
@@ -23,21 +28,16 @@ make net             # downloads the network this version is built for
 ```
 
 The network is Tsumi's only evaluation and is not part of the repository; the engine looks for it in its
-working directory or next to the executable. [Using the engine](docs/using-the-engine.md) covers
-Windows builds, CPU support, large pages and the network files.
-
-Try it:
+working directory or next to the executable. [Building](docs/building.md) covers Windows builds, CPU support
+and the network files. Then:
 
 ```bash
 ./tsumi bench                     # searches a set of positions: nodes and speed
 ./tsumi test                      # perft suite
 pip install chess                 # python-chess, for the tools
-python3 tools/play.py             # play against Tsumi in the terminal
+python3 tools/play.py             # play against Tsumi in the terminal, under the selfmate rules
 python3 tools/match.py --e1 ./tsumi --e2 random --games 20 --nodes 5000     # against a random mover
 ```
-
-Any UCI GUI can run Tsumi, but GUIs score checkmate for the side that delivers it, which is the wrong way
-round here, so play and run matches with the tools in this repository.
 
 ## Rules and scores
 
@@ -67,7 +67,8 @@ Extra commands: `d` (the board), `eval`, `legal`, `perft N`, `bench [depth]`, `t
 `nnuetest [plies]` and `wait`; `go mate N` and `go searchmoves` are supported. Commands on the command line
 run in order before the engine exits: `tsumi bench 13`, or
 `tsumi "setoption name EvalFile value my.nnue" "position startpos" "go depth 12"`. `tsumi datagen` and
-`tsumi rescore` generate and relabel training data.
+`tsumi rescore` generate and relabel training data. [Options and commands](docs/options-and-commands.md)
+has the details.
 
 ## How it works
 
@@ -80,17 +81,19 @@ single-reply positions are extended, and the quiescence search of captures, chec
 in depth; a position with a bare king is a draw, which the search steers towards a stalemate.
 [Search](docs/search.md) has the details.
 
-**Evaluation.** An NNUE network: HalfKAv2_hm piece-square features and threat features, 1024 units per
-perspective, pairwise products, two layers of 32 and 16 output buckets, with inputs the board alone does not
-give — the side to move's number of legal moves and whether it is in check. Inference is in integers, with
-SSE4.2, AVX2 and AVX-512 kernels that give identical results. [Evaluation](docs/evaluation.md) has the
+**Evaluation.** An NNUE network trained on self-play. Its inputs are piece-square features (HalfKAv2_hm),
+threat features (which piece attacks which square, and what stands there) and, because selfmate turns on
+being forced, the side to move's number of legal moves and whether it is in check. Each side's features feed
+1024 units, which are clipped and multiplied in pairs, and a head of two layers of 32 gives the score, with 16
+sets of weights chosen by the material and the move count. The engine runs the network in integer arithmetic
+with SSE4.2, AVX2 and AVX-512 kernels that give identical results. [Evaluation](docs/evaluation.md) has the
 architecture and the network file format.
 
 ## Training
 
 The best network plays games against itself, a candidate is trained on them, starting from the best network,
 and a match decides whether the candidate replaces it. `tools/pipeline.sh` runs the loop; its pieces
-(`tsumi datagen`, `train/train.py`, `tools/match.py`) can also be run by hand.
+(`tsumi datagen`, `train/train.py`, `tools/match.py`) can also be run manually.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
