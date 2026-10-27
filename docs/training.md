@@ -219,15 +219,20 @@ networks are draws, and 1000 games give about ±10 Elo.
 
 **Sparring partners.** Matches at equal strength are mostly draws, so it helps to measure against other
 players too. One is the random mover (`--e2 random`), which Tsumi should never lose to. Another is
-[Fairy-Stockfish](https://github.com/fairy-stockfish/Fairy-Stockfish), playing selfmate chess with its own
-search and evaluation:
+[Fairy-Stockfish](https://github.com/fairy-stockfish/Fairy-Stockfish), which has had the game built in as
+`misere` (misère chess) since August 2024, after its last binary release, so it is built from source:
 
 ```bash
 git clone --depth 1 https://github.com/fairy-stockfish/Fairy-Stockfish
 (cd Fairy-Stockfish/src && make -j build ARCH=x86-64-avx2)
 python3 tools/match.py --e1 ./tsumi --e2 Fairy-Stockfish/src/stockfish --games 100 --tc 10+0.1 --concurrency 8 \
-    --opt2 VariantPath=tools/fairy-stockfish-selfmate.ini --opt2 UCI_Variant=selfmate
+    --opt2 UCI_Variant=misere
 ```
+
+Its evaluation is its handcrafted chess one with a selfmate endgame rule. The
+[Fairy-Stockfish NNUE page](https://fairy-stockfish.github.io/nnue/) also has a network for the variant,
+`misere-c488fb592f7b.nnue`, a few Elo stronger, which `--opt2 EvalFile=path/to/misere-c488fb592f7b.nnue`
+loads (Fairy-Stockfish uses a network only when its file name starts with the variant's name).
 
 Flounder, a separate project, plays the move Stockfish rates worst, which makes a reasonable selfmate player.
 `tools/match.py` runs it with `--e2 "python3 ../flounder/flounder.py" --opt2 Stockfish=/path/to/stockfish`.

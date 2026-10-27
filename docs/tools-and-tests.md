@@ -9,7 +9,6 @@ trainer also needs numpy and torch (`requirements.txt`).
 | `tools/make_puzzles.py`, `tools/puzzles.py` | make selfmate puzzles with an independent python-chess solver, and check that the engine solves them |
 | `tools/gen_book.py` | opening books for datagen: random-play positions, with the start position or positions drawn from another book |
 | `tools/release_net.py` | name a network for publication after its SHA-256, and make it the engine's default |
-| `tools/fairy-stockfish-selfmate.ini` | selfmate for [Fairy-Stockfish](https://github.com/fairy-stockfish/Fairy-Stockfish), as a sparring partner |
 | `train/train.py` | the trainer |
 | `train/calibrate.py` | how well a data set's search scores predict its results |
 | `train/verify_net.py` | the engine's evaluations against numpy, bit for bit |

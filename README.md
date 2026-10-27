@@ -1,7 +1,7 @@
 # Tsumi
 
-Tsumi is a chess engine for **selfmate chess**: ordinary chess rules, except that the player who gets
-checkmated wins. (*Tsumi* 詰み is the shogi word for checkmate.)
+Tsumi is a chess engine for **selfmate chess**, or misère chess: ordinary chess rules, except that the player
+who gets checkmated wins. (*Tsumi* 詰み is the shogi word for checkmate.)
 
 Neither player will ever mate the other voluntarily, so the only way to win is to force it by leaving the
 opponent no legal move but mating ones. The game is a contest of compulsion, of checks, pins, single-reply
