@@ -15,7 +15,7 @@ Examples:
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 50 --depth 8 --pgn out.pgn
   python3 tools/match.py --e1 ./tsumi --e2 random --games 20 --nodes 5000      # sanity check vs random mover
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 1000 --nodes 50000 --book UHO_Lichess_4852_v1.epd.zip --book-share 50
-  python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --sprt 0 5 --tc 10+0.1 --concurrency 8   # until it is decided
+  python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --sprt 0 5 --tc 10+0.1 --hash 64 --concurrency 8   # until decided
 """
 import argparse
 import contextlib
@@ -55,7 +55,9 @@ def deadline(seconds, kill):
 
 
 class UciEngine:
-    def __init__(self, path, options):
+    def __init__(self, path, options, shared=None):
+        """options are set and must exist; shared, the match-wide ones, are set where the engine has them and
+        options do not."""
         # A path, or a command line ("python3 some_engine.py").  Outside the terminal's process group: a Ctrl-C
         # reaches this script alone, which ends the engines itself.
         cmd = shlex.split(path, posix=os.name != "nt")
@@ -67,25 +69,30 @@ class UciEngine:
             with deadline(60, self.kill):   # a program that never answers (not a UCI engine, say) is killed
                 self.send("uci")
                 listed = self.listed_options(self.wait_for("uciok"))
-                self.settings = {k: default for k, (default, _) in listed.items() if default is not None}
+                self.settings = {k: default for k, (_, default, _) in listed.items() if default is not None}
+                given = {k.lower() for k in options}   # the match-wide settings yield to these, and to a missing option
+                wanted = {k: v for k, v in (shared or {}).items() if k.lower() in listed and k.lower() not in given}
+                wanted.update(options)
                 # An engine ignores an option it does not have, and a value its combo option does not list, so a
-                # typo would otherwise play the whole match with the engine's defaults.
+                # typo would otherwise play the whole match with the engine's defaults.  Names go in the engine's
+                # own spelling, which some engines insist on.
                 unlisted = []   # combo options given a value the engine did not list
-                for k, v in options.items():
+                for k, v in wanted.items():
                     if k.lower() not in listed:
                         raise ValueError(f"the engine has no option {k}")
-                    values = listed[k.lower()][1]
+                    name, _, values = listed[k.lower()]
                     if values is not None and v.lower() not in values:
                         unlisted.append((k, v))
                     self.settings[k.lower()] = v
-                    self.send(f"setoption name {k} value {v}")
+                    self.send(f"setoption name {name} value {v}")
                 if unlisted:   # an option set since may have added the value (Fairy-Stockfish's VariantPath adds
                     self.send("uci")   # variants), so list the options again and set the value again
                     listed = self.listed_options(self.wait_for("uciok"))
                     for k, v in unlisted:
-                        if v.lower() not in (listed.get(k.lower(), (None, None))[1] or []):
+                        name, _, values = listed.get(k.lower(), (k, None, None))
+                        if v.lower() not in (values or []):
                             raise ValueError(f"{v!r} is not one of the values of {k}")
-                        self.send(f"setoption name {k} value {v}")
+                        self.send(f"setoption name {name} value {v}")
                 self.send("isready")
                 self.wait_for("readyok")
         except BaseException:
@@ -94,8 +101,8 @@ class UciEngine:
 
     @staticmethod
     def listed_options(lines):
-        """The options in an engine's answer to "uci": lower-case name -> (default, the values of a combo option in
-        lower case, else None)."""
+        """The options in an engine's answer to "uci": lower-case name -> (the name as the engine spells it, its
+        default, and the values of a combo option in lower case, else None)."""
         d = {}
         for line in lines:
             if line.startswith("option name "):
@@ -103,7 +110,7 @@ class UciEngine:
                 kind, _, rest = rest.partition(" ")
                 parts = rest.removeprefix("default ").split(" var ")   # the default, then a combo's values
                 default = parts[0].split(" min ")[0] if rest.startswith("default ") else None
-                d[name.lower()] = default, [v.lower() for v in parts[1:]] if kind == "combo" else None
+                d[name.lower()] = name, default, [v.lower() for v in parts[1:]] if kind == "combo" else None
         return d
 
     def send(self, s):
@@ -180,8 +187,8 @@ class RandomEngine:
         pass
 
 
-def make_engine(path, options, seed=0):
-    return RandomEngine(seed) if path == "random" else UciEngine(path, options)
+def make_engine(path, options, seed=0, shared=None):
+    return RandomEngine(seed) if path == "random" else UciEngine(path, options, shared)
 
 
 def fmt_time(secs):
@@ -406,6 +413,8 @@ def main():
     ap.add_argument("--opt1", action="append", help="a UCI option for engine 1, e.g. EvalFile=nets/x.nnue (one per --opt1, "
                                                    "repeated for more)")
     ap.add_argument("--opt2", action="append", help="the same for engine 2")
+    ap.add_argument("--threads", type=int, help="search threads for both engines (an engine's --opt wins)")
+    ap.add_argument("--hash", type=int, help="hash table in MB for both engines (an engine's --opt wins)")
     ap.add_argument("--games", type=int, help="number of games (rounded up to an even number; default 20), or with --sprt "
                                               "the most to play (default 40000)")
     ap.add_argument("--sprt", nargs=2, type=float, metavar=("ELO0", "ELO1"),
@@ -441,6 +450,7 @@ def main():
         o1, o2 = parse_options(args.opt1), parse_options(args.opt2)
     except ValueError as e:
         ap.error(str(e))
+    shared = {k: str(v) for k, v in (("Threads", args.threads), ("Hash", args.hash)) if v is not None}
     # An engine that cannot start, take its options, or search stops the match here, with what it wrote, rather than
     # failing every pair.  Fairy-Stockfish, for one, explains a network it cannot load and then hangs, hence the
     # deadline.
@@ -448,7 +458,7 @@ def main():
     for path, opts in ((args.e1, o1), (args.e2, o2)):
         engine = None
         try:
-            engine = make_engine(path, opts)
+            engine = make_engine(path, opts, shared=shared)
             with deadline(60, engine.kill):
                 engine.bestmove(chess.Board(), "depth 1")
             settings.append(engine.settings)
@@ -547,8 +557,8 @@ def main():
     def play_pair(i, committed):
         engines = []
         try:
-            engines.append(make_engine(args.e1, o1, i))
-            engines.append(make_engine(args.e2, o2, i + 1000))
+            engines.append(make_engine(args.e1, o1, i, shared))
+            engines.append(make_engine(args.e2, o2, i + 1000, shared))
             with lock:
                 live.update(engines)
             points = 0.0
