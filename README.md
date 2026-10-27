@@ -72,9 +72,10 @@ has the details.
 
 ## How it works
 
-**Search.** Iterative deepening with aspiration windows and principal variation search, a hash table,
-killer, counter-move, history, and continuation-history move ordering, late move reductions and pruning,
-futility and reverse futility pruning, internal iterative reductions, and lazy SMP. For selfmate, every node
+**Search.** An alpha-beta search with the usual machinery: iterative deepening with aspiration windows,
+principal variation search, a hash table, late move reductions and pruning, futility and reverse futility
+pruning, internal iterative reductions, and lazy SMP for several threads. Moves are ordered by the killer and
+counter-move heuristics and by history, including continuation history. For selfmate, every node
 generates its legal moves, so mates and stalemates are exact everywhere and the move count is known. There
 is no null-move pruning, since zugzwang is the whole game. Checks are searched early and reduced less,
 single-reply positions are extended, and the quiescence search of captures, checks, and evasions is bounded

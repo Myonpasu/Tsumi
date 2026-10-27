@@ -1,7 +1,8 @@
-Tsumi's search is an alpha-beta search of the usual kind: iterative deepening with aspiration windows and
-principal variation search, a hash table, killer, counter-move, history, and continuation-history move
-ordering, late move reductions and pruning, futility and reverse futility pruning, internal iterative
-reductions, and lazy SMP for several threads. The parts specific to selfmate:
+Tsumi's search is an alpha-beta search with the usual machinery: iterative deepening with aspiration
+windows, principal variation search, a hash table, late move reductions and pruning, futility and reverse
+futility pruning, internal iterative reductions, and lazy SMP for several threads. Moves are ordered by the
+killer and counter-move heuristics and by history, including capture and continuation history. The parts
+specific to selfmate:
 
 - **Every searched node generates its legal moves**, so mates and stalemates are exact everywhere and the
   number of legal moves is known: a side with one or two legal moves is about to be forced, which the network
