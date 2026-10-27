@@ -211,11 +211,33 @@ python3 train/verify_net.py --net nets/gen1.nnue --data data/gen0/data.bin      
 ./tsumi "setoption name EvalFile value nets/gen1.nnue" "nnuetest 20000"         # incremental vs full accumulator updates
 python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 EvalFile=nets/gen1.nnue --opt2 EvalFile=nets/best.nnue \
     --games 1000 --nodes 50000 --concurrency 16
+python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 EvalFile=nets/gen1.nnue --opt2 EvalFile=nets/best.nnue \
+    --sprt 0 5 --nodes 50000 --concurrency 16                                   # until the test decides
 ```
 
-The match plays every opening with both colours. Selfmate has a strong first-move advantage, which the two
-games of a pair largely cancel, so the Elo error bar is computed over the pairs. Most games between equal
-networks are draws, and 1000 games give about ±10 Elo.
+The match plays every opening with both colours and reports the result as
+[OpenBench](https://github.com/AndyGrant/OpenBench) does, so that it reads like other engines' tests. This is
+Tsumi 1.0 against Fairy-Stockfish with its misère network (below), 500 games at 10+0.1:
+
+```
+Elo   | 130.94 +- 15.19 (95%)
+Conf  | 10.0+0.10s Threads=1 Hash=64/16MB
+Games | N: 500 W: 184 L: 4 D: 312
+Penta | [0, 1, 87, 143, 19]
+```
+
+The Elo difference comes with its 95% confidence interval, the second line gives the limit per move and the
+engines' threads and hash (engine 1's / engine 2's where they differ), and `Penta` counts the pairs of games
+by outcome, LL, LD, DD or WL, WD, WW. Selfmate has a strong first-move advantage, which the two games of a
+pair largely cancel, so the statistics are computed over the pairs (the pentanomial model of fishtest and
+OpenBench). Most games between equal networks are draws, and 1000 games give about ±10 Elo.
+
+With `--sprt ELO0 ELO1` the match is a sequential probability ratio test between the two Elo differences
+(normalized Elo, as on fishtest and OpenBench). It stops as soon as the log-likelihood ratio reaches a bound,
+±2.94 for 5% chances of either wrong decision, or the `--games` limit, 40000 by default. The report then has
+an `SPRT` line in place of `Conf` and an `LLR` line, `LLR   | 2.95 (-2.94, 2.94) [0.00, 5.00]`, with the
+ratio, its bounds, and the hypotheses. A candidate that is clearly better or worse is decided within a few
+hundred games, and one that is about even runs to the limit.
 
 **Sparring partners.** Matches at equal strength are mostly draws, so it helps to measure against other
 players too. One is the random mover (`--e2 random`), which Tsumi should never lose to. Another is
@@ -231,8 +253,9 @@ python3 tools/match.py --e1 ./tsumi --e2 Fairy-Stockfish/src/stockfish --games 1
 
 Its evaluation is its handcrafted chess one with a selfmate endgame rule. The
 [Fairy-Stockfish NNUE page](https://fairy-stockfish.github.io/nnue/) also has a network for the variant,
-`misere-c488fb592f7b.nnue`, a few Elo stronger, which `--opt2 EvalFile=path/to/misere-c488fb592f7b.nnue`
-loads (Fairy-Stockfish uses a network only when its file name starts with the variant's name).
+`misere-c488fb592f7b.nnue`, listed as a few Elo stronger, which `--opt2 EvalFile=path/to/misere-c488fb592f7b.nnue`
+loads (Fairy-Stockfish uses a network only when its file name starts with the variant's name). Tsumi 1.0 beat it
+with that network by 131 Elo over 500 games at 10+0.1 (the report above), losing 4 of them.
 
 Flounder, a separate project, plays the move Stockfish rates worst, which makes a reasonable selfmate player.
 `tools/match.py` runs it with `--e2 "python3 ../flounder/flounder.py" --opt2 Stockfish=/path/to/stockfish`.

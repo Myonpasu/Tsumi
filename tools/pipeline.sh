@@ -130,10 +130,11 @@ gen_summary() {
     games_line=$(grep -E '^  done ' "logs/datagen_gen$g.log" 2>/dev/null | tail -n 1 | sed 's/^  done *//; s/, [0-9.]* plies per game//' || true)
     val=$(grep -E '^  kept +epoch [0-9]+ of [0-9]+: val loss [0-9.]+' "logs/train_gen$g.log" 2>/dev/null | tail -n 1 \
           | sed -E 's/^  kept +(epoch [0-9]+ of [0-9]+): (val loss [0-9.]+).*/\2 (\1)/' || true)
-    final=$(grep "^Final:" "logs/match_gen$g.log" 2>/dev/null | tail -n 1 | sed 's/^Final: //; s/  (.*//' || true)
+    final=$(awk '/^Games +\|/ {games=$0; sub(/^Games +\| /, "", games)} /^Elo +\|/ {elo=$0; sub(/^Elo +\| /, "", elo)}
+                 END {if (elo != "") print games ", Elo " elo}' "logs/match_gen$g.log" 2>/dev/null || true)
     kv "data"     "${npos:-?} positions in data/gen$g/data.bin from ${games_line:-? games}${dt:+  ($(fmt_dur "$dt"))}"
     kv "training" "nets/gen$((g+1)).nnue: ${val:-?}${tt:+  ($(fmt_dur "$tt"))}"
-    kv "match"    "${final:-?}${mt:+  ($(fmt_dur "$mt"))}"
+    kv "match"    "gen$((g+1)) vs best: ${final:-?}${mt:+  ($(fmt_dur "$mt"))}"
 }
 # The phases of a generation that are complete are marked by files written when they end: data/genN/done,
 # logs/train_genN.done and logs/decision_genN, the last holding the decision ("accepted" or "rejected", the Elo and
@@ -141,7 +142,7 @@ gen_summary() {
 # is marked by logs/match_genN.running.  Deleting a phase's product redoes it on the next run: the candidate
 # (nets/genN+1.nnue) for the training and the match, the match log for the match alone.
 decision_file() { echo "logs/decision_gen$1"; }
-match_result() { grep -oE 'elo [+-]?[0-9.]+ \+/- [0-9.?]+' "logs/match_gen$1.log" 2>/dev/null | tail -n 1 | awk '{print $2, $4}' || true; }
+match_result() { grep -E '^Elo +\| ' "logs/match_gen$1.log" 2>/dev/null | tail -n 1 | awk '{print $3, $5}' || true; }
 verdict() { awk "BEGIN{exit !($1 >= 0)}" && echo accepted || echo rejected; }
 # The candidate of generation N replaces the best network: the network first and its checkpoint second, each copied
 # beside its target and moved into place, so that no file is ever half-written and a run interrupted in between
