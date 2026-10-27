@@ -51,8 +51,8 @@ jobs:
           win=tsumi-$version-windows-x86-64
           linux=tsumi-$version-linux-x86-64
           mkdir -p dist "$win" "$linux"
-          cp tsumi.exe "$win/" && cp "$net" "$win/"
-          cp tsumi-universal "$linux/tsumi" && cp "$net" "$linux/"
+          cp tsumi.exe "$win/tsumi-windows-x86-64.exe" && cp "$net" "$win/"
+          cp tsumi-universal "$linux/tsumi-linux-x86-64" && cp "$net" "$linux/"
           zip -qr "dist/$win.zip" "$win"
           tar czf "dist/$linux.tar.gz" "$linux"
           bench=$(./tsumi-universal "setoption name EvalFile value $net" "bench 13" | awk '/Nodes searched/ {print $NF}')
