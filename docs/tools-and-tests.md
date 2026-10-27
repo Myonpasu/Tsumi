@@ -1,4 +1,4 @@
-The Python tools need [python-chess](https://github.com/niklasf/python-chess) (`pip install chess`); the
+The Python tools need [python-chess](https://github.com/niklasf/python-chess) (`pip install chess`), and the
 trainer also needs numpy and torch (`requirements.txt`).
 
 | | |

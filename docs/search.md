@@ -21,5 +21,5 @@ reductions, and lazy SMP for several threads. The parts specific to selfmate:
   A repetition does not count as a draw against a bare king until it can be claimed (the bare side need not
   repeat), and at the root a stalemate on the board is preferred to a draw further ahead.
 
-The search's scores are in millipawns internally and reported in centipawns; `score mate N` is a forced
+The search's scores are in millipawns internally and reported in centipawns, and `score mate N` is a forced
 selfmate in N moves ([Options and commands](options-and-commands.md)).

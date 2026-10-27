@@ -1,4 +1,4 @@
-Tsumi's documentation; the [README](../README.md) covers getting started.
+Tsumi's documentation. The [README](../README.md) covers getting started.
 
 - [Download and usage](download-and-usage.md): the releases, a chess GUI, installing Tsumi in En Croissant,
   playing against it, reading its scores, the rules.

@@ -1,6 +1,6 @@
 Training is a loop: the best network plays games against itself, a candidate is trained on them, starting
 from the best network, and a match decides whether the candidate replaces it. `tools/pipeline.sh` runs the
-loop; the pieces can also be run manually.
+loop, and the pieces can also be run manually.
 
 ## Setup
 
@@ -68,7 +68,7 @@ The settings are environment variables:
 | `PROGRESS_EVERY` | 2000000 | a row of the training table every this many positions |
 
 A generation of 20,000 games gives about 2.5 million positions. More games per generation and more nodes per
-move both make better networks; raise `NODES` when the gains per generation flatten, keeping `MATCH_NODES`
+move both make better networks. Raise `NODES` when the gains per generation flatten, keeping `MATCH_NODES`
 well above it.
 
 ## Data generation
@@ -81,7 +81,7 @@ python3 tools/gen_book.py --count 20000 --random-share 50 --out data/gen0/book.e
 ```
 
 Each game starts from the start position or, with `--book`, from the next position of the book (taken in a
-random order, each once; see [opening books](#opening-books)). The engine plays at about `--nodes` nodes per
+random order, each once, as described under [opening books](#opening-books)). The engine plays at about `--nodes` nodes per
 move (each search gets 80–120% of it). Every position the search scores is a candidate for recording, except
 positions in check or whose best move is a capture (their scores are tactical), positions before
 `--write-min-ply`, and positions already recorded in this run. A record holds the position, the search score
@@ -97,17 +97,17 @@ score alone. Datagen reports how often that happens.
 
 **Adjudication**: a game is drawn after `--adj-draw-plies` (16) searches in a row within
 ±`--adj-draw-score` (10) millipawns from ply `--adj-draw-minply` (120) on, or from any ply when a side has a
-bare king; `--max-plies` (400) ends a game as a draw.
+bare king. `--max-plies` (400) ends a game as a draw.
 
 `--resume` continues an interrupted run (it needs the `--log`, where the games are counted); without it, the
-output is appended to. `tsumi datagen --help` lists every option; the defaults are in `src/datagen.h`.
+output is appended to. `tsumi datagen --help` lists every option, and the defaults are in `src/datagen.h`.
 
 ## Opening books
 
 A book is a file with a FEN or an EPD line per position (EPD operations after the four position fields are
 ignored), or a PGN file of opening lines, each game played to its end. The pipeline's `BOOK` and
 `MATCH_BOOK`, `tools/gen_book.py --base` and `tools/match.py --book` read both, plain or in a .zip, as the
-books of the [Stockfish books repository](https://github.com/official-stockfish/books) come;
+books of the [Stockfish books repository](https://github.com/official-stockfish/books) come.
 `tsumi datagen --book` reads a plain FEN/EPD file, which is what the pipeline hands it. Entries without a
 position a game can start from are left out, and the tools say how many. Datagen takes a book's positions in
 a random order, each once, and `match.py` plays each opening once with both colours.
@@ -150,7 +150,7 @@ target = λ · model(score) + (1 − λ) · result
 ```
 
 `model` is a win/draw/loss model of the search scores fitted to the run's own data (`train/wdl.py`), so that
-the two parts agree on average. λ is `--lambda` (0.8); with a different `--end-lambda` it moves linearly from
+the two parts agree on average. λ is `--lambda` (0.8). With a different `--end-lambda` it moves linearly from
 the one to the other over the epochs.
 
 ### Output units
@@ -175,15 +175,15 @@ epoch:
 
 `val loss` is measured on whole games held out from training (`--val-fraction`, 2%), and `train loss` on the
 training positions, both against the target at the final λ (a column shows λ when it changes), so they
-compare from epoch to epoch; a widening gap between them is the network memorising its training games.
+compare from epoch to epoch. A widening gap between them is the network memorising its training games.
 `vs score` and `vs result` are the held-out positions against the search score and against the game result
 alone. With `--keep-best` the network written is the epoch with the lowest `val loss`, and a run can be
 stopped with Ctrl-C at any time without losing it.
 
 The trainer writes the network (`OUT.nnue`, with its units reordered for the engine's sparse first layer) and
 its float checkpoint (`OUT.nnue.pt`). Training-only *feature factorisation* lets rare features share weights
-with their king-independent and square-independent counterparts; it is folded into the network at export.
-The trainer holds all the training data in memory (32 bytes per position); a single file is memory-mapped.
+with their king-independent and square-independent counterparts, and it is folded into the network at export.
+The trainer holds all the training data in memory (32 bytes per position), and a single file is memory-mapped.
 `python3 train/train.py --help` lists the options.
 
 ## Relabelling data and changing the network's size

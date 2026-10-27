@@ -9,11 +9,11 @@ threat features ───────┘                                        
 
 - **Inputs.** Piece-square features (HalfKAv2_hm): every piece, both kings included, by square and by the
   perspective's king square (32 king buckets, mirrored horizontally). **Threat features**: one per
-  (attacking piece, target square, what the target holds). A piece's targets are the pieces it attacks (the
-  enemy king included, which is a check; its own pieces included, which is a defence; its own king not) and
-  the empty squares next to either king (the flight squares). Kings are not attackers here (the king buckets
-  already say what stands next to a king). There are 8,320 threat features; a position from self-play has
-  about 17 of them active on average, and rarely more than 60. `src/nnue_features.h` defines both sets.
+  (attacking piece, target square, what the target holds). A piece's targets are the pieces it attacks,
+  including the enemy king (a check) and its own pieces (a defence) but not its own king, and the empty
+  squares next to either king (the flight squares). Kings are not attackers here (the king buckets already
+  say what stands next to a king). There are 8,320 threat features, of which a position from self-play has
+  about 17 active on average, and rarely more than 60. `src/nnue_features.h` defines both sets.
 - **Accumulators.** Each perspective (the side to move's and the opponent's) has `H` units (1024 in the
   released network), the sums of the active features' rows (int8 weights), updated incrementally move by
   move, with a per-king-square cache for king moves. The threat changes of a move are worked out once and
@@ -36,7 +36,7 @@ threat features ───────┘                                        
 ## Output units
 
 The network's output goes through a fixed curve chosen so that an output of +1 is a 50% chance of winning
-for the side to move, whatever the scale of the search scores it was trained on; the engine shows it as
+for the side to move, whatever the scale of the search scores it was trained on, and the engine shows it as
 +1.00. *Output units* under [Training](training.md) gives the curve.
 
 ## Network file

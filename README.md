@@ -13,10 +13,10 @@ repository. The [documentation](docs) describes both in detail.
 ## Getting started
 
 The [releases](../../releases) have Windows and Linux executables with the network. Tsumi is a UCI engine
-with no interface of its own, so it is used from a chess GUI such as
-[En Croissant](https://encroissant.org). Be aware that GUIs score a checkmate for the side that delivers it,
-the opposite of the selfmate result, so the winner a GUI announces is the player who lost.
-[Download and usage](docs/download-and-usage.md) walks through installing Tsumi, playing against it and reading its scores.
+with no interface of its own, so it is most easily used from a chess GUI. Be aware that GUIs score a checkmate
+for the side that delivers it, the opposite of the selfmate result, so the winner a GUI announces is the player
+who lost. [Download and usage](docs/download-and-usage.md) walks through installing Tsumi in a GUI, playing
+against it and reading its scores.
 
 To build from source instead (x86-64, g++ or clang with C++17):
 
@@ -27,7 +27,7 @@ make -j windows      # tsumi.exe, cross-compiled from Linux with mingw-w64
 make net             # downloads the network this version is built for
 ```
 
-The network is Tsumi's only evaluation and is not part of the repository; the engine looks for it in its
+The network is Tsumi's only evaluation and is not part of the repository. The engine looks for it in its
 working directory or next to the executable. [Building](docs/building.md) covers Windows builds, CPU support
 and the network files. Then:
 
@@ -49,8 +49,8 @@ python3 tools/match.py --e1 ./tsumi --e2 random --games 20 --nodes 5000     # ag
 | One side has only its king | drawn in practice: a bare king gives no check, so its opponent can never be mated |
 
 Scores are from the side to move's point of view, and positive means winning, that is, heading for being
-mated. `score cp 150` is +1.50 and good for the engine; +1.00 is calibrated to a 50% chance of winning, the
-rest being mostly draws. `score mate 3` means the engine can force its own mate in three moves, and
+mated. `score cp 150` is +1.50 and good for the engine, and +1.00 is calibrated to a 50% chance of winning,
+the rest being mostly draws. `score mate 3` means the engine can force its own mate in three moves, and
 `score mate -2` that it will be forced to mate its opponent within two.
 
 ## UCI options and commands
@@ -74,11 +74,11 @@ has the details.
 
 **Search.** Iterative deepening with aspiration windows and principal variation search, a hash table,
 killer, counter-move, history and continuation-history move ordering, late move reductions and pruning,
-futility and reverse futility pruning, internal iterative reductions, and lazy SMP. For selfmate: every node
-generates its legal moves, so mates and stalemates are exact everywhere and the move count is known; there is
-no null-move pruning, since zugzwang is the whole game; checks are searched early and reduced less,
+futility and reverse futility pruning, internal iterative reductions, and lazy SMP. For selfmate, every node
+generates its legal moves, so mates and stalemates are exact everywhere and the move count is known. There
+is no null-move pruning, since zugzwang is the whole game. Checks are searched early and reduced less,
 single-reply positions are extended, and the quiescence search of captures, checks and evasions is bounded
-in depth; a position with a bare king is a draw, which the search steers towards a stalemate.
+in depth. A position with a bare king is a draw, which the search steers towards a stalemate.
 [Search](docs/search.md) has the details.
 
 **Evaluation.** An NNUE network trained on self-play. Its inputs are piece-square features (HalfKAv2_hm),
@@ -92,7 +92,7 @@ architecture and the network file format.
 ## Training
 
 The best network plays games against itself, a candidate is trained on them, starting from the best network,
-and a match decides whether the candidate replaces it. `tools/pipeline.sh` runs the loop; its pieces
+and a match decides whether the candidate replaces it. `tools/pipeline.sh` runs the loop, and its pieces
 (`tsumi datagen`, `train/train.py`, `tools/match.py`) can also be run manually.
 
 ```bash

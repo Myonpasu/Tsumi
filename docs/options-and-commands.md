@@ -15,7 +15,7 @@ and both must fit in memory at once.
 
 **Large pages.** On Linux the hash table and the network's weights use transparent huge pages. On Windows
 they need the *Lock pages in memory* right (Local Security Policy > Local Policies > User Rights Assignment,
-then log on again); the engine says at `setoption name Hash` whether it got them, and works without them, a
+then log on again). The engine says at `setoption name Hash` whether it got them, and works without them, a
 little slower.
 
 ## Scores
@@ -28,14 +28,14 @@ mated:
 - `score mate 3`: the engine can force its own mate in three moves (it wins).
 - `score mate -2`: the engine will be forced to mate its opponent within two moves (it loses).
 
-Internally the engine counts in millipawns and reports centipawns; the training data holds millipawns.
+Internally the engine counts in millipawns and reports centipawns. The training data holds millipawns.
 
 ## Commands
 
 Besides the UCI commands: `d` (show the board), `eval` (the network's evaluation of the position), `legal`
 (the legal moves, `+` marking checks), `perft N`, `bench [depth]`, `test` (perft suite), `nnuetest [plies]`
 (incremental accumulator updates compared with full recomputation), `wait` (block until the search ends, for
-scripts). `go mate N` stops at a forced selfmate in N; `go searchmoves` is supported.
+scripts). `go mate N` stops at a forced selfmate in N, and `go searchmoves` is supported.
 
 **Command line**: `tsumi bench 13`, `tsumi test`, or any UCI commands as arguments, run in order before the
 engine exits: `tsumi "setoption name EvalFile value my.nnue" "position startpos" "go depth 12"`.
