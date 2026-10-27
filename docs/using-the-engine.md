@@ -31,7 +31,7 @@ make checkpoint         # ... and its training checkpoint (.pt), to train from
 
 Networks are named after their contents, `tsumi-<the first 12 hex digits of the file's SHA-256>.nnue`, and
 every published one is an asset of the
-[networks release](https://github.com/Myonpasu/tsumi/releases/tag/networks), with its training checkpoint
+[networks release](https://github.com/Myonpasu/Tsumi/releases/tag/networks), with its training checkpoint
 beside it. The engine's own network is `NNUE::DEFAULT_NET` in `src/nnue.h`; the release archives include
 it. Tsumi loads it from its working directory or from the executable's directory, and the `EvalFile` option
 names another file. Without a network the engine still answers `uci`, `perft` and the like, but exits when

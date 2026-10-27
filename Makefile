@@ -68,7 +68,7 @@ train/libfeat.so: train/featlib.cpp src/nnue_features.h src/bitboard.cpp src/bit
 # repository, where every published network is an asset.  Its name is the first 12 hex digits of its SHA-256,
 # which the download is checked against; the checkpoint takes the network's name.  NET_FETCH downloads $@ to
 # $@.tmp (the workflow uses the GitHub CLI instead, which works while the repository is private).
-REPO      ?= Myonpasu/tsumi
+REPO      ?= Myonpasu/Tsumi
 NET_URL   ?= https://github.com/$(REPO)/releases/download/networks
 NET_FETCH ?= curl -fL --progress-bar -o $@.tmp $(NET_URL)/$@
 NET       := $(shell sed -n 's/.*DEFAULT_NET\[\] = "\([^"]*\)".*/\1/p' src/nnue.h)
