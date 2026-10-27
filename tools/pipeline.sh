@@ -91,7 +91,7 @@ if [[ ! -f "$best" ]]; then
     exit 1
 fi
 loaded=$(./tsumi "setoption name EvalFile value $best" quit)
-loaded=${loaded##*$'\n'}   # the answer to the setoption (the engine may have loaded ./tsumi.nnue at startup too)
+loaded=${loaded##*$'\n'}   # the answer to the setoption (the engine may have loaded its default network at startup too)
 [[ "$loaded" == *"loaded network"* ]] || { echo "$loaded" >&2; exit 1; }
 
 # ---- console layout: a banner per generation, a rule per phase, aligned key/value lines ---------------------------

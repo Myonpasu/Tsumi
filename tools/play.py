@@ -99,7 +99,7 @@ def status(board):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--engine", default="./tsumi")
-    ap.add_argument("--net", help="network file (the EvalFile option; default: the engine's tsumi.nnue)")
+    ap.add_argument("--net", help="network file (the EvalFile option; default: the engine's own network)")
     ap.add_argument("--color", choices=["white", "black"], default="white")
     ap.add_argument("--movetime", type=int, default=1000, help="the engine's thinking time per move in ms (default 1000)")
     ap.add_argument("--threads", type=int, default=1)

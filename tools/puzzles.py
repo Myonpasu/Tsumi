@@ -26,7 +26,7 @@ def engine_solve(engine, net, fen, movetime, depth):
     # check=False: an engine that fails shows as an unsolved puzzle.
     out = subprocess.run([engine], input="\n".join(cmds) + "\n", capture_output=True, text=True, check=False).stdout
     if "no network loaded" in out:   # the engine searches with a network or not at all
-        sys.exit(f"{engine}: no network loaded - pass --net FILE (or put tsumi.nnue next to the engine)")
+        sys.exit(f"{engine}: no network loaded - pass --net FILE (or get the default one with make net)")
     mate = None
     for line in out.splitlines():
         if line.startswith("info depth") and (m := re.search(r"score mate (-?\d+)", line)):
@@ -40,7 +40,7 @@ def engine_solve(engine, net, fen, movetime, depth):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--engine", default="./tsumi")
-    ap.add_argument("--net", help="network file (EvalFile option); default: the engine's own default, tsumi.nnue")
+    ap.add_argument("--net", help="network file (EvalFile option); default: the engine's own network")
     ap.add_argument("--epd", default="tests/puzzles.epd")
     ap.add_argument("--movetime", type=int, default=2000)
     ap.add_argument("--depth", type=int, default=0)

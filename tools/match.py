@@ -14,6 +14,7 @@ Examples:
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 1000 --nodes 50000 --book UHO_Lichess_4852_v1.epd.zip --book-share 50
 """
 import argparse
+import contextlib
 import math
 import os
 import random
@@ -31,6 +32,24 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gen_book import draw_positions
 
 
+class EngineDied(RuntimeError):
+    """The engine's output ended (it exited, or was killed); lines is what it wrote since the last command."""
+    def __init__(self, lines):
+        super().__init__("engine died" + (f" after: {lines[-1]}" if lines else ""))
+        self.lines = lines
+
+
+@contextlib.contextmanager
+def deadline(seconds, kill):
+    """Kills the engine if the block takes longer, so that waiting on an engine that hangs ends in EngineDied."""
+    timer = threading.Timer(seconds, kill)
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
+
+
 class UciEngine:
     def __init__(self, path, options):
         # A path, or a command line ("python3 some_engine.py").  Outside the terminal's process group: a Ctrl-C
@@ -40,12 +59,42 @@ class UciEngine:
                                   start_new_session=True, creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
         assert self.p.stdin is not None and self.p.stdout is not None
         self.stdin, self.stdout = self.p.stdin, self.p.stdout
-        self.send("uci")
-        self.wait_for("uciok")
-        for k, v in options.items():
-            self.send(f"setoption name {k} value {v}")
-        self.send("isready")
-        self.wait_for("readyok")
+        try:
+            with deadline(60, self.kill):   # a program that never answers (not a UCI engine, say) is killed
+                self.send("uci")
+                listed = self.listed_options(self.wait_for("uciok"))
+                # An engine ignores an option it does not have, and a value its combo option does not list, so a
+                # typo would otherwise play the whole match with the engine's defaults.
+                unlisted = []   # combo options given a value the engine did not list
+                for k, v in options.items():
+                    if k.lower() not in listed:
+                        raise ValueError(f"the engine has no option {k}")
+                    values = listed[k.lower()]
+                    if values is not None and v.lower() not in values:
+                        unlisted.append((k, v))
+                    self.send(f"setoption name {k} value {v}")
+                if unlisted:   # an option set since may have added the value (Fairy-Stockfish's VariantPath adds
+                    self.send("uci")   # variants), so list the options again and set the value again
+                    listed = self.listed_options(self.wait_for("uciok"))
+                    for k, v in unlisted:
+                        if v.lower() not in (listed.get(k.lower()) or []):
+                            raise ValueError(f"{v!r} is not one of the values of {k}")
+                        self.send(f"setoption name {k} value {v}")
+                self.send("isready")
+                self.wait_for("readyok")
+        except BaseException:
+            self.quit()   # the engine is not left running
+            raise
+
+    @staticmethod
+    def listed_options(lines):
+        """The options in an engine's answer to "uci", lower case: name -> the values of a combo option, else None."""
+        d = {}
+        for line in lines:
+            if line.startswith("option name "):
+                name, _, rest = line.removeprefix("option name ").lower().partition(" type ")
+                d[name] = rest.split(" var ")[1:] if rest.startswith("combo") else None
+        return d
 
     def send(self, s):
         self.stdin.write(s + "\n")
@@ -56,7 +105,7 @@ class UciEngine:
         while True:
             line = self.stdout.readline()
             if not line:
-                raise RuntimeError("engine died" + (f" after: {lines[-1]}" if lines else ""))
+                raise EngineDied(lines)
             lines.append(line.strip())
             if line.startswith(token):
                 return lines
@@ -155,7 +204,9 @@ def parse_tc(tc):
 def parse_options(lst):
     d = {}
     for item in lst or []:
-        k, v = item.split("=", 1)
+        k, eq, v = item.partition("=")
+        if not eq:
+            raise ValueError(f"an option is NAME=VALUE (got {item!r})")
         d[k] = v
     return d
 
@@ -279,8 +330,9 @@ def main():
     ap.add_argument("--e2", required=True)
     ap.add_argument("--name1", default="engine1")
     ap.add_argument("--name2", default="engine2")
-    ap.add_argument("--opt1", action="append", help="UCI option for engine 1, e.g. EvalFile=nets/x.nnue (repeatable)")
-    ap.add_argument("--opt2", action="append")
+    ap.add_argument("--opt1", action="append", help="a UCI option for engine 1, e.g. EvalFile=nets/x.nnue (one per --opt1, "
+                                                   "repeated for more)")
+    ap.add_argument("--opt2", action="append", help="the same for engine 2")
     ap.add_argument("--games", type=int, default=20, help="number of games (rounded up to an even number)")
     ap.add_argument("--tc", help="time control base+inc in seconds, e.g. 10+0.1")
     ap.add_argument("--nodes", type=int, default=0)
@@ -305,7 +357,26 @@ def main():
     if not 0 <= args.book_share <= 100:
         ap.error("--book-share is a percentage, 0-100")
     rng = random.Random(args.seed or time.time_ns())
-    o1, o2 = parse_options(args.opt1), parse_options(args.opt2)
+    try:
+        o1, o2 = parse_options(args.opt1), parse_options(args.opt2)
+    except ValueError as e:
+        ap.error(str(e))
+    # An engine that cannot start, take its options, or search stops the match here, with what it wrote, rather than
+    # failing every pair.  Fairy-Stockfish, for one, explains a network it cannot load and then hangs, hence the
+    # deadline.
+    for path, opts in ((args.e1, o1), (args.e2, o2)):
+        engine = None
+        try:
+            engine = make_engine(path, opts)
+            with deadline(60, engine.kill):
+                engine.bestmove(chess.Board(), "depth 1")
+        except EngineDied as e:
+            sys.exit("\n  ".join([f"{path} failed{', after writing:' if e.lines else ''}"] + e.lines[-10:]))
+        except (OSError, RuntimeError, ValueError) as e:
+            sys.exit(f"{path}: {e}")
+        finally:
+            if engine is not None:
+                engine.quit()
     pairs = (args.games + 1) // 2
     # A book position is drawn once while the book lasts: a deterministic engine (a fixed node or depth limit) plays
     # the same pair of games from the same opening, which would count twice for one game's worth of information.
