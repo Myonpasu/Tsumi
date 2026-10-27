@@ -1,4 +1,4 @@
-# Builds and tests Tsumi on every push and pull request.  On a tag <version>, such as 1.0, it also packages the
+# Builds and tests Tsumi on every push and pull request.  On a tag v<version>, such as v1.0, it also packages the
 # Windows and Linux executables with the network and drafts the release "Tsumi <version>", for its notes to be
 # written and published.  To release: publish the network if it is new (tools/release_net.py), set VERSION in
 # src/uci.cpp, commit, and push the tag.
@@ -6,7 +6,7 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ['[0-9]*']
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -44,7 +44,7 @@ jobs:
       - name: Package
         if: github.ref_type == 'tag'
         run: |
-          version=$GITHUB_REF_NAME
+          version=${GITHUB_REF_NAME#v}
           ./tsumi-universal uci quit | grep -qx "id name Tsumi $version" ||
               { echo "the tag $GITHUB_REF_NAME does not match VERSION in src/uci.cpp"; exit 1; }
           net=$(ls tsumi-*.nnue)
@@ -72,5 +72,5 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
               gh release upload --clobber "$GITHUB_REF_NAME" dist/*
           else
-              gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Tsumi $GITHUB_REF_NAME" --notes-file notes.md dist/*
+              gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Tsumi ${GITHUB_REF_NAME#v}" --notes-file notes.md dist/*
           fi
