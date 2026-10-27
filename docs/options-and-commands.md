@@ -8,10 +8,10 @@
 | `MultiPV` | 1 | lines to report |
 | `MoveOverhead` | 30 | milliseconds kept in reserve on every move, for the GUI's and the system's delays |
 
-Rather than play in a degraded way, Tsumi says why in an `info string` and exits: when asked to search without
-a network, or when the system cannot provide the hash table asked for (`info string out of memory: could not
-allocate 8192 MB for the hash table`). When a GUI plays Tsumi against itself, each engine has its own table,
-and both must fit in memory at once.
+When asked to search without a network, or when the system cannot provide the hash table asked for, Tsumi
+says why in an `info string` (such as `info string out of memory: could not allocate 8192 MB for the hash
+table`) and exits rather than play in a degraded way. When a GUI plays Tsumi against itself, each engine has
+its own table, and both must fit in memory at once.
 
 **Large pages.** On Linux the hash table and the network's weights use transparent huge pages. On Windows
 they need the *Lock pages in memory* right (Local Security Policy > Local Policies > User Rights Assignment,
@@ -32,11 +32,11 @@ Internally the engine counts in millipawns and reports centipawns. The training 
 
 ## Commands
 
-Besides the UCI commands: `d` (show the board), `eval` (the network's evaluation of the position), `legal`
-(the legal moves, `+` marking checks), `perft N`, `bench [depth]`, `test` (perft suite), `nnuetest [plies]`
-(incremental accumulator updates compared with full recomputation), `wait` (block until the search ends, for
-scripts). `go mate N` stops at a forced selfmate in N, and `go searchmoves` is supported.
+Besides the UCI commands, Tsumi understands `d` (show the board), `eval` (the network's evaluation of the
+position), `legal` (the legal moves, `+` marking checks), `perft N`, `bench [depth]`, `test` (perft suite),
+`nnuetest [plies]` (incremental accumulator updates compared with full recomputation), and `wait` (block until
+the search ends, for scripts). `go mate N` stops at a forced selfmate in N, and `go searchmoves` is supported.
 
-**Command line**: `tsumi bench 13`, `tsumi test`, or any UCI commands as arguments, run in order before the
-engine exits: `tsumi "setoption name EvalFile value my.nnue" "position startpos" "go depth 12"`.
+**Command line.** Commands given as arguments run in order before the engine exits, as in `tsumi bench 13`,
+`tsumi test`, or `tsumi "setoption name EvalFile value my.nnue" "position startpos" "go depth 12"`.
 `tsumi datagen` and `tsumi rescore` generate and relabel training data ([Training](training.md)).

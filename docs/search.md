@@ -5,9 +5,9 @@ killer and counter-move heuristics and by history, including capture and continu
 specific to selfmate:
 
 - **Every searched node generates its legal moves**, so mates and stalemates are exact everywhere and the
-  number of legal moves is known: a side with one or two legal moves is about to be forced, which the network
-  is told ([Evaluation](evaluation.md)). The hash table is probed first, so a hit that ends a node costs no move
-  generation.
+  number of legal moves is known. A side with one or two legal moves is about to be forced, and the count is
+  one of the network's inputs ([Evaluation](evaluation.md)). The hash table is probed first, so a hit that ends
+  a node costs no move generation.
 - **No null-move pruning.** Zugzwang is the whole game, and null-move pruning assumes there is none.
 - **Forcing moves first.** Checks are searched right after captures and reduced less than quiet moves, and a
   position with a single legal move is extended.

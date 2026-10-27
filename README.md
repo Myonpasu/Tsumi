@@ -3,7 +3,7 @@
 Tsumi is a chess engine for **selfmate chess**: ordinary chess rules, except that the player who gets
 checkmated wins. (*Tsumi* 詰み is the shogi word for checkmate.)
 
-Neither player will ever mate the other voluntarily, so the only way to win is to force it: leave the
+Neither player will ever mate the other voluntarily, so the only way to win is to force it by leaving the
 opponent no legal move but mating ones. The game is a contest of compulsion, of checks, pins, single-reply
 positions, and kings boxed in by their own pieces, and a normal engine playing its worst moves is no good at
 it, because it assumes an opponent who wants to win the ordinary way. Tsumi's search is built for forcing
@@ -63,9 +63,9 @@ the rest being mostly draws. `score mate 3` means the engine can force its own m
 | `MultiPV` | 1 | lines to report |
 | `MoveOverhead` | 30 | milliseconds kept in reserve on every move |
 
-Extra commands: `d` (the board), `eval`, `legal`, `perft N`, `bench [depth]`, `test` (perft suite),
-`nnuetest [plies]`, and `wait`; `go mate N` and `go searchmoves` are supported. Commands on the command line
-run in order before the engine exits: `tsumi bench 13`, or
+The extra commands are `d` (the board), `eval`, `legal`, `perft N`, `bench [depth]`, `test` (perft suite),
+`nnuetest [plies]`, and `wait`. Both `go mate N` and `go searchmoves` are supported. Commands on the command
+line run in order before the engine exits, as in `tsumi bench 13` or
 `tsumi "setoption name EvalFile value my.nnue" "position startpos" "go depth 12"`. `tsumi datagen` and
 `tsumi rescore` generate and relabel training data. [Options and commands](docs/options-and-commands.md)
 has the details.

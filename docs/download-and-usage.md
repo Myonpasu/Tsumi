@@ -1,4 +1,4 @@
-Tsumi is a UCI chess engine with no interface of its own: a chess GUI shows the board, and Tsumi plays and
+Tsumi is a UCI chess engine with no interface of its own. A chess GUI shows the board, and Tsumi plays and
 analyses behind it. This page goes from a download to a game.
 
 ## Download

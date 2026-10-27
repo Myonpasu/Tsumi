@@ -7,13 +7,13 @@ threat features ───────┘                                        
                        legal-move inputs (the side to move's move count, in check) ─────┘
 ```
 
-- **Inputs.** Piece-square features (HalfKAv2_hm): every piece, both kings included, by square and by the
-  perspective's king square (32 king buckets, mirrored horizontally). **Threat features**: one per
-  (attacking piece, target square, what the target holds). A piece's targets are the pieces it attacks,
-  including the enemy king (a check) and its own pieces (a defence) but not its own king, and the empty
-  squares next to either king (the flight squares). Kings are not attackers here (the king buckets already
-  say what stands next to a king). There are 8,320 threat features, of which a position from self-play has
-  about 17 active on average, and rarely more than 60. `src/nnue_features.h` defines both sets.
+- **Piece-square features** (HalfKAv2_hm). One for every piece, both kings included, by its square and by the
+  perspective's king square (32 king buckets, mirrored horizontally).
+- **Threat features.** One per (attacking piece, target square, what the target holds). A piece's targets are
+  the pieces it attacks, including the enemy king (a check) and its own pieces (a defence) but not its own
+  king, and the empty squares next to either king (the flight squares). Kings are not attackers here (the king
+  buckets already say what stands next to a king). There are 8,320 threat features, of which a position from
+  self-play has about 17 active on average, and rarely more than 60. `src/nnue_features.h` defines both sets.
 - **Accumulators.** Each perspective (the side to move's and the opponent's) has `H` units (1024 in the
   released network), the sums of the active features' rows (int8 weights), updated incrementally move by
   move, with a per-king-square cache for king moves. The threat changes of a move are worked out once and
