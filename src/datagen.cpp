@@ -132,14 +132,13 @@ Limits search_limits(uint64_t nodes) {
 // A random move, as Stockfish's random_multi_pv: a second search with several principal variations, then one of
 // the top lines within randomMultiPVDiff of the best (the best move included) is played, so that the game goes on
 // at engine strength and its result still says something about the earlier positions.  Returns MOVE_NONE when no
-// other move lies within the window: a forcing position gets the best move rather than a blunder.
+// other move lies within the window: a forcing position gets the best move rather than a blunder.  Each line gets
+// half the move's node budget: the lines only choose the move (the position's label comes from the search before),
+// and a shallower look at them hardly changes the choice.
 Move choose_multipv_move(Engine& engine, const Limits& lim, int legalMoves, const DatagenOptions& opt, PRNG& rng) {
     const int pvs = std::min(opt.randomMultiPV, legalMoves);
     engine.shared.params.multiPV = pvs;
-    Limits lim2 = lim;
-    lim2.softNodes *= pvs;   // the budget is per line, as in Stockfish's generator
-    lim2.nodes *= pvs;
-    SearchResult r = engine.search(lim2);
+    SearchResult r = engine.search(search_limits(lim.softNodes * pvs / 2));
     engine.shared.params.multiPV = 1;
     const std::vector<RootLine>& lines = r.lines;
     if (lines.size() < 2 || lines[0].move == MOVE_NONE || is_mate_score(lines[0].score)) return MOVE_NONE;

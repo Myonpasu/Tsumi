@@ -52,7 +52,7 @@ The settings are environment variables:
 | `OPENING_MIN_SCORE`, `OPENING_MAX_SCORE` | 500, 2000 | a random-play position is played when a search scores it within these millipawns, for either side (`OPENING_MAX_SCORE=0`: no check) |
 | `BOOK` | | the other games start from positions drawn from this book ([opening books](#opening-books)); without one, from the start position |
 | `RANDOM_MOVE_PCT`, `RANDOM_MOVE_MINPLY`, `RANDOM_MOVE_MAXPLY` | 40, 0, 20 | random moves on 40% of plies 0–19 |
-| `RANDOM_MULTI_PV`, `RANDOM_MULTI_PV_DIFF` | 4, 250 | a random move is one of the best 4 within 0.25 pawns of the best |
+| `RANDOM_MULTI_PV`, `RANDOM_MULTI_PV_DIFF` | 3, 250 | a random move is one of the best 3 within 0.25 pawns of the best |
 | `WRITE_MIN_PLY` | 5 | positions before this ply are not recorded |
 | `HIDDEN` | 1024 | network width (units per side), a multiple of 64; must match the checkpoint it warm-starts from |
 | `EPOCHS` | 6 | epochs per generation (the learning rate halves every 3) |
@@ -66,7 +66,7 @@ The settings are environment variables:
 | `RESUME` | 1 | warm-start from the best network's checkpoint (0: train from scratch) |
 | `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 1000, 50000, | the match: games, and nodes per move or a time control such as `10+0.1` |
 | `MATCH_BOOK`, `MATCH_RANDOM_SHARE` | , 50 | the match's openings: 8 random plies from the start position each, or with a book this % of them random and the rest drawn from it |
-| `CONCURRENCY` | half of `THREADS` | match games played at once |
+| `CONCURRENCY` | `THREADS` | match games played at once |
 | `DEVICE` | `cuda` if available | the trainer's device |
 | `PROGRESS_EVERY` | 2000000 | a row of the training table every this many positions |
 
@@ -102,10 +102,10 @@ every second position tried falls within the default window, and the searches th
 of a percent of the games. Datagen reports the share kept.
 
 **Random moves.** On `--random-move-pct` % of the plies from `--random-move-minply` to
-`--random-move-maxply` − 1, a second search with `--random-multi-pv` lines picks one of the moves within
-`--random-multi-pv-diff` millipawns of the best (the best included), so the games vary but go on at engine
-strength, and their results still say something about the earlier positions. A ply with no other move in the
-window keeps the best move. When the next search shows that a random move cost more than the window allowed,
+`--random-move-maxply` − 1, a second search with `--random-multi-pv` lines, each at half the move's node
+budget, picks one of the moves within `--random-multi-pv-diff` millipawns of the best (the best included), so
+the games vary but go on at engine strength, and their results still say something about the earlier
+positions. A ply with no other move in the window keeps the best move. When the next search shows that a random move cost more than the window allowed,
 the positions before it lose their result label (the game was steered by a mistake) and are trained on their
 score alone. Datagen reports how often that happens.
 

@@ -27,7 +27,7 @@ BOOK=${BOOK:-}                          # the other games start from positions d
 RANDOM_MOVE_PCT=${RANDOM_MOVE_PCT:-40}  # a random move on this % of the plies from RANDOM_MOVE_MINPLY to
 RANDOM_MOVE_MINPLY=${RANDOM_MOVE_MINPLY:-0}    # RANDOM_MOVE_MAXPLY - 1 (counted from the opening) ...
 RANDOM_MOVE_MAXPLY=${RANDOM_MOVE_MAXPLY:-20}
-RANDOM_MULTI_PV=${RANDOM_MULTI_PV:-4}   # ... one of the top RANDOM_MULTI_PV moves of a MultiPV search within
+RANDOM_MULTI_PV=${RANDOM_MULTI_PV:-3}   # ... one of the top RANDOM_MULTI_PV moves of a MultiPV search within
 RANDOM_MULTI_PV_DIFF=${RANDOM_MULTI_PV_DIFF:-250}   # RANDOM_MULTI_PV_DIFF internal units (millipawns) of the best
 WRITE_MIN_PLY=${WRITE_MIN_PLY:-5}       # positions before this ply of a game are not recorded
 # Training
@@ -57,7 +57,7 @@ MATCH_NODES=${MATCH_NODES:-50000}       # nodes per move ...
 MATCH_TC=${MATCH_TC:-}                  # ... or a time control such as 10+0.1 instead
 MATCH_BOOK=${MATCH_BOOK:-}              # a book (as BOOK) to draw openings from; without one, every opening is 8
 MATCH_RANDOM_SHARE=${MATCH_RANDOM_SHARE:-50}   # random plies from the start position, with one only this % of them
-CONCURRENCY=${CONCURRENCY:-$(( THREADS / 2 > 0 ? THREADS / 2 : 1 ))}   # games played at once
+CONCURRENCY=${CONCURRENCY:-$THREADS}   # games played at once (a game's two engines take turns on one CPU)
 
 first=${1:-0}
 last=${2:-5}

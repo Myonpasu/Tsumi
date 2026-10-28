@@ -58,7 +58,7 @@ struct DatagenOptions {
     int randomMovePct = 40;      // a random move on this percentage of the plies in [randomMoveMinPly, randomMoveMaxPly)
     int randomMoveMinPly = 0;    // (8 per game on average with the defaults), never when the search has found a mate
     int randomMoveMaxPly = 20;
-    int randomMultiPV = 4;       // a random move is one of the top randomMultiPV moves of a MultiPV search ...
+    int randomMultiPV = 3;       // a random move is one of the top randomMultiPV moves of a MultiPV search ...
     int randomMultiPVDiff = 250; // ... that score within this many internal units of the best (0.25 pawns)
     int writeMinPly = 5;         // positions before this ply of the game are not recorded
     int dedupMB = 128;           // the table of recorded positions (16M keys in 128 MB; 0 = off)
