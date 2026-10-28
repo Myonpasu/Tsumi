@@ -175,7 +175,7 @@ what the shallow searches behind the scores could not see, weigh more at the end
 had, so a result the score makes unlikely, a won position lost to a later mistake,
 say, mostly drops out rather than teach the network the mistake. The positions without a result label are
 all kept, the held-out positions are filtered the same way, and `--no-result-filter` turns it off. It keeps
-most position.
+most positions.
 
 ### Output units
 
