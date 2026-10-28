@@ -310,6 +310,7 @@ for gen in $(seq "$first" "$last"); do
     read -r elo err <<< "$(match_result "$gen")"
     [[ -n "$elo" ]] || { echo "logs/match_gen$gen.log has no result" >&2; exit 1; }
 
+    echo
     rule "generation $gen: summary"
     gen_summary "$gen" "$data_time" "$train_time" "$match_time"
     if [[ "$(verdict "$elo")" == accepted ]]; then
