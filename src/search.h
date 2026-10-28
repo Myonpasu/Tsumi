@@ -19,6 +19,7 @@ inline int64_t elapsed_ms(TimePoint since) {
 struct Limits {
     int depth = 0;              // 0 = unlimited
     uint64_t nodes = 0;         // 0 = unlimited (the total of all threads)
+    uint64_t softNodes = 0;     // 0 = none: the search finishes the iteration in which the total reaches this
     int64_t movetime = 0;       // ms
     int64_t time[2] = {0, 0};   // ms remaining per side
     bool clock = false;         // a game clock was given (wtime or btime), even one at 0

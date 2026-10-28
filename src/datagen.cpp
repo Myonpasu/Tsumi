@@ -24,6 +24,10 @@ std::atomic<uint64_t> g_costly{0};           // alternatives that cost more than
 std::atomic<uint64_t> g_noResult{0};         // positions recorded without a result label (flags bit 1)
 std::atomic<uint64_t> g_duplicates{0};       // positions not recorded because they were recorded earlier in this run
 std::atomic<uint64_t> g_shallow{0};          // positions not recorded because the search did not complete depth 1
+std::atomic<uint64_t> g_openingsTried{0};    // random-play positions searched for the score window ...
+std::atomic<uint64_t> g_openingsKept{0};     // ... and found within it
+
+constexpr uint32_t RANDOM_OPENING = UINT32_MAX;   // a game's opening when it is not a book position (openings_of)
 
 // Keys of the positions recorded so far, one slot per key hash, always replaced (Stockfish's
 // was_seen_before).  Many games open alike, so without this their first plies would be recorded over and
@@ -117,6 +121,14 @@ Progress reload_progress(const DatagenOptions& opt) {
     return p;
 }
 
+// The soft node budget of a search (NODES_HARD_FACTOR in datagen.h).
+Limits search_limits(uint64_t nodes) {
+    Limits lim;
+    lim.softNodes = std::max<uint64_t>(1, nodes);
+    lim.nodes = lim.softNodes <= UINT64_MAX / NODES_HARD_FACTOR ? lim.softNodes * NODES_HARD_FACTOR : UINT64_MAX;
+    return lim;
+}
+
 // A random move, as Stockfish's random_multi_pv: a second search with several principal variations, then one of
 // the top lines within randomMultiPVDiff of the best (the best move included) is played, so that the game goes on
 // at engine strength and its result still says something about the earlier positions.  Returns MOVE_NONE when no
@@ -125,7 +137,8 @@ Move choose_multipv_move(Engine& engine, const Limits& lim, int legalMoves, cons
     const int pvs = std::min(opt.randomMultiPV, legalMoves);
     engine.shared.params.multiPV = pvs;
     Limits lim2 = lim;
-    if (lim2.nodes) lim2.nodes *= pvs;   // the budget is per line, as in Stockfish's generator
+    lim2.softNodes *= pvs;   // the budget is per line, as in Stockfish's generator
+    lim2.nodes *= pvs;
     SearchResult r = engine.search(lim2);
     engine.shared.params.multiPV = 1;
     const std::vector<RootLine>& lines = r.lines;
@@ -178,17 +191,66 @@ bool load_book(const std::string& file, Book& book) {
     return true;
 }
 
-// The order in which the games take the book's positions: random, fixed by the seed, and each position once before
-// any comes round again (fishtest's order=random).  Game g of the run starts from position order[g % size].
-std::vector<uint32_t> book_order(size_t size, uint64_t seed) {
-    std::vector<uint32_t> order(size);
-    for (size_t i = 0; i < size; ++i) order[i] = uint32_t(i);
+// The opening of each game: RANDOM_OPENING for the games that start from a random-play position, randomOpeningPct
+// of every hundred games in a shuffled order, and for the others the index of their book position, the book taken
+// in a random order and each position once before any comes round again (fishtest's order=random).  Fixed by the
+// run's own seed, not the one --resume moves on, so that a resumed run keeps the assignment.
+std::vector<uint32_t> openings_of(const DatagenOptions& opt, size_t bookSize, uint64_t seed) {
     PRNG rng(seed ^ 0x2545F4914F6CDD1DULL);
-    for (size_t i = size; i > 1; --i) std::swap(order[i - 1], order[rng.rand_below(i)]);
-    return order;
+    auto shuffled = [&rng](size_t n) {
+        std::vector<uint32_t> v(n);
+        for (size_t i = 0; i < n; ++i) v[i] = uint32_t(i);
+        for (size_t i = n; i > 1; --i) std::swap(v[i - 1], v[rng.rand_below(i)]);
+        return v;
+    };
+    const std::vector<uint32_t> order = shuffled(bookSize);
+    std::vector<uint32_t> openings(opt.games), slots;
+    size_t fromBook = 0;
+    for (uint64_t g = 0; g < opt.games; ++g) {
+        if (g % 100 == 0) slots = shuffled(100);
+        const bool random = slots[g % 100] < uint32_t(opt.randomOpeningPct);
+        openings[g] = random ? RANDOM_OPENING : bookSize ? order[fromBook++ % bookSize] : 0;
+    }
+    return openings;
 }
 
-void worker(const DatagenOptions& opt, int threadId, const Book& book, const std::vector<uint32_t>& order, std::FILE* out) {
+// A random-play opening: randomPliesMin to randomPliesMax uniformly random legal plies from the start position, tried
+// again when that ends the game and, with a score window, when a search at the game's node budget scores the
+// position outside it (for either side).  Within the window one side has the upper hand, which makes the game more
+// often decisive than a balanced opening does, and the position is not yet decided.
+Position random_opening(Engine& engine, const DatagenOptions& opt, PRNG& rng) {
+    for (int tries = 1;; ++tries) {
+        Position pos;
+        pos.set(START_FEN);
+        MoveList ml;
+        const int plies = opt.randomPliesMin + int(rng.rand_below(uint64_t(opt.randomPliesMax - opt.randomPliesMin + 1)));
+        for (int i = 0; i < plies; ++i) {
+            pos.generate_legal(ml);
+            if (ml.size == 0) break;
+            pos.do_move(ml.moves[rng.rand_below(ml.size)]);
+        }
+        pos.generate_legal(ml);
+        if (ml.size == 0 || pos.is_dead_position()) continue;
+        if (opt.openingMaxScore > 0) {
+            g_openingsTried++;
+            engine.new_game();
+            engine.set_position(pos, {});
+            const SearchResult r = engine.search(search_limits(opt.nodes));
+            const bool within = r.depth >= 1 && !is_mate_score(r.score) && std::abs(r.score) >= opt.openingMinScore
+                             && std::abs(r.score) <= opt.openingMaxScore;
+            if (!within && tries < 1000) continue;
+            if (!within) {   // a window that random play cannot reach: better a game outside it than none
+                std::lock_guard<std::mutex> lock(g_outMutex);
+                std::printf("  warning: no random-play position within %d-%d millipawns in 1000 tries; one outside it is played\n",
+                            opt.openingMinScore, opt.openingMaxScore);
+                std::fflush(stdout);
+            } else g_openingsKept++;
+        }
+        return pos;
+    }
+}
+
+void worker(const DatagenOptions& opt, int threadId, const Book& book, const std::vector<uint32_t>& openings, std::FILE* out) {
     PRNG rng(opt.seed * 0x9E3779B97F4A7C15ULL + 0xABCDEF * (threadId + 1));
     Engine engine;
     engine.set_hash(opt.hashMB);
@@ -202,7 +264,8 @@ void worker(const DatagenOptions& opt, int threadId, const Book& book, const std
         if (g >= opt.games) break;
 
         Position pos;
-        pos.set(book.fens.empty() ? std::string(START_FEN) : book.fens[order[g % order.size()]]);
+        if (openings[g] == RANDOM_OPENING) pos = random_opening(engine, opt, rng);
+        else pos.set(book.fens.empty() ? std::string(START_FEN) : book.fens[openings[g]]);
         keys.clear();
         keys.push_back(pos.key());
         game.clear();
@@ -236,8 +299,7 @@ void worker(const DatagenOptions& opt, int threadId, const Book& book, const std
 
             std::vector<Key> history(keys.begin(), keys.end() - 1);
             engine.set_position(pos, history);
-            Limits lim;
-            lim.nodes = std::max<uint64_t>(1, opt.nodes * (80 + rng.rand_below(41)) / 100);
+            const Limits lim = search_limits(opt.nodes * (80 + rng.rand_below(41)) / 100);
             SearchResult r = engine.search(lim);
             if (r.bestMove == MOVE_NONE) break;  // cannot happen: the position has legal moves
             const int score = r.score;
@@ -339,8 +401,7 @@ bool run_datagen(const DatagenOptions& options) {
     std::printf("datagen\n");
     Book book;
     if (!opt.book.empty() && !load_book(opt.book, book)) return false;
-    // From the run's own seed, not the one --resume moves on, so that a resumed run keeps the order.
-    const std::vector<uint32_t> order = book_order(book.fens.size(), options.seed);
+    const std::vector<uint32_t> openings = openings_of(opt, book.fens.size(), options.seed);
     if (opt.dedupMB > 0) {
         size_t entries = 1;
         while (entries * 2 * sizeof(uint64_t) <= size_t(opt.dedupMB) << 20) entries *= 2;
@@ -354,13 +415,23 @@ bool run_datagen(const DatagenOptions& options) {
                       std::to_string(opt.randomMoveMaxPly - 1) + ": one of the top " + std::to_string(opt.randomMultiPV) +
                       " moves within " + std::to_string(opt.randomMultiPVDiff) + " millipawns of the best (one that costs more by the next "
                       "search leaves the positions before it without a result label)";
-    std::string start = "the start position";
-    if (!book.fens.empty()) {
-        const size_t startLines = std::count(book.fens.begin(), book.fens.end(), std::string(START_FEN));
-        start = opt.book + " (" + with_commas(book.fens.size()) + " positions, taken in a random order";
-        if (startLines > 0) start += "; " + std::to_string(100 * startLines / book.fens.size()) + "% the start position";
-        if (book.skipped > 0) start += "; " + with_commas(book.skipped) + " lines without a legal position left out";
+    std::string start;
+    if (opt.randomOpeningPct > 0) {
+        start = std::to_string(opt.randomOpeningPct) + "% random-play positions (" + std::to_string(opt.randomPliesMin) + "-" +
+                std::to_string(opt.randomPliesMax) + " random plies";
+        if (opt.openingMaxScore > 0)
+            start += ", kept when a search scores them within " + std::to_string(opt.openingMinScore) + "-" +
+                     std::to_string(opt.openingMaxScore) + " millipawns";
         start += ")";
+    }
+    if (opt.randomOpeningPct < 100) {
+        if (!start.empty()) start += ", " + std::to_string(100 - opt.randomOpeningPct) + "% ";
+        if (book.fens.empty()) start += "the start position";
+        else {
+            start += opt.book + " (" + with_commas(book.fens.size()) + " positions, taken in a random order";
+            if (book.skipped > 0) start += "; " + with_commas(book.skipped) + " lines without a legal position left out";
+            start += ")";
+        }
     }
     const std::string limit = with_commas(opt.nodes) + " nodes per move";
     std::printf("  %-16s%s\n", "evaluation", NNUE::current()->path.c_str());
@@ -409,7 +480,7 @@ bool run_datagen(const DatagenOptions& options) {
     std::printf("\n  %8s  %7s  %7s  %7s  %12s  %10s  %7s  %8s  %8s\n", "games", "white", "black", "draws", "positions", "plies/game", "pos/s", "elapsed", "ETA");
     std::fflush(stdout);
     std::vector<std::thread> th;
-    for (int t = 0; t < opt.threads; ++t) th.emplace_back(worker, std::cref(opt), t, std::cref(book), std::cref(order), out);
+    for (int t = 0; t < opt.threads; ++t) th.emplace_back(worker, std::cref(opt), t, std::cref(book), std::cref(openings), out);
     for (auto& t : th) t.join();
     std::fclose(out);
     if (g_log) { std::fclose(g_log); g_log = nullptr; }
@@ -427,6 +498,10 @@ bool run_datagen(const DatagenOptions& options) {
     else
         std::printf("  %-16s%s in %s (%s, %.0f pos/s)\n", "positions", with_commas(g_positions.load()).c_str(), opt.out.c_str(),
                     duration(secs).c_str(), newPositions / std::max(secs, 1e-9));
+    if (g_openingsTried > 0)
+        std::printf("  %-16s%s random-play positions searched: %.1f%% lay within %d-%d millipawns and opened a game, the rest were "
+                    "drawn again\n", "openings", with_commas(g_openingsTried.load()).c_str(),
+                    100.0 * double(g_openingsKept.load()) / double(g_openingsTried.load()), opt.openingMinScore, opt.openingMaxScore);
     if (g_duplicates > 0)
         std::printf("  %-16s%s positions recorded earlier in this run (%.1f%% of those eligible)\n", "skipped",
                     with_commas(g_duplicates.load()).c_str(),
@@ -493,9 +568,7 @@ void rescore_worker(const RescoreOptions& opt, std::vector<TrainingRecord>& recs
             MoveList ml;
             if (!decode_record(r, pos) || (pos.generate_legal(ml), ml.size == 0)) { g_rescoreBad++; continue; }
             engine.set_position(pos, {});
-            Limits lim;
-            lim.nodes = opt.nodes;
-            SearchResult res = engine.search(lim);
+            SearchResult res = engine.search(search_limits(opt.nodes));
             if (res.bestMove == MOVE_NONE) { g_rescoreBad++; continue; }
             if (res.depth < 1) { g_rescoreShallow++; continue; }   // cut off by the runaway-search limit: keep the old score
             r.score = int16_t(std::max(-32000, std::min(32000, res.score)));

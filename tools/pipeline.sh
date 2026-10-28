@@ -19,15 +19,15 @@ trap 'echo; echo "interrupted: run the same command again to carry on from here"
 # Data generation
 THREADS=${THREADS:-$(nproc)}            # datagen threads
 GAMES=${GAMES:-20000}                   # games per generation
-NODES=${NODES:-10000}                   # search nodes per move (each search gets 80-120% of it)
-# Each generation's games start from a book of its own (tools/gen_book.py, a line per game), in which
-BOOK_RANDOM_SHARE=${BOOK_RANDOM_SHARE:-50}   # this % of the lines are random-play positions (8-12 random plies:
-                                        #     unbalanced games, which cover the decisive phase) and the rest are ...
+NODES=${NODES:-10000}                   # search nodes per move (each search gets 80-120% of it and finishes its iteration)
+RANDOM_OPENINGS=${RANDOM_OPENINGS:-50}  # this % of the games start from a random-play position: 8-12 random plies, played
+OPENING_MIN_SCORE=${OPENING_MIN_SCORE:-500}    # when a search scores it within these millipawns for either side
+OPENING_MAX_SCORE=${OPENING_MAX_SCORE:-2000}   # (unbalanced, so more often decisive, but not decided; 0: no check).
+                                        #     The other games start from ...
 BOOK=${BOOK:-}                          # ... positions drawn from this book - FEN or EPD lines, or PGN opening lines,
                                         #     plain or zipped as the Stockfish books come - or else the start position
-                                        #     (BOOK_RANDOM_SHARE=0 and no BOOK: every game from it)
 RANDOM_MOVE_PCT=${RANDOM_MOVE_PCT:-40}  # a random move on this % of the plies from RANDOM_MOVE_MINPLY to
-RANDOM_MOVE_MINPLY=${RANDOM_MOVE_MINPLY:-0}    # RANDOM_MOVE_MAXPLY - 1 (counted from the book position) ...
+RANDOM_MOVE_MINPLY=${RANDOM_MOVE_MINPLY:-0}    # RANDOM_MOVE_MAXPLY - 1 (counted from the opening) ...
 RANDOM_MOVE_MAXPLY=${RANDOM_MOVE_MAXPLY:-20}
 RANDOM_MULTI_PV=${RANDOM_MULTI_PV:-4}   # ... one of the top RANDOM_MULTI_PV moves of a MultiPV search within
 RANDOM_MULTI_PV_DIFF=${RANDOM_MULTI_PV_DIFF:-250}   # RANDOM_MULTI_PV_DIFF internal units (millipawns) of the best
@@ -38,7 +38,11 @@ EPOCHS=${EPOCHS:-6}                     # epochs per generation; the learning ra
 LR=${LR:-1e-5}                          # learning rate when warm-starting from the best network's checkpoint
 LR_SCRATCH=${LR_SCRATCH:-1e-3}          # learning rate when training from scratch (RESUME=0, or no checkpoint)
 LAMBDA=${LAMBDA:-0.8}                   # weight of the search score against the game result in the target at the
-END_LAMBDA=${END_LAMBDA:-0.8}           #     first epoch, and at the last (interpolated linearly)
+END_LAMBDA=${END_LAMBDA:-0.5}           #     first epoch, and at the last (interpolated linearly)
+RESULT_FILTER=${RESULT_FILTER:-1}       # 1: a position is trained on with the probability the score model gives its
+                                        #     result, so results the score makes unlikely mostly drop out; 0: all kept
+LOSS_ASYMMETRY=${LOSS_ASYMMETRY:-0.2}   # the loss is weighted 1 + this where the network is more optimistic than the
+                                        #     target
 ANCHOR_P=${ANCHOR_P:-0.01}              # the win probability at an output of 0 on the curve the output goes through
                                         #     (+1.00 is a 50% win on it): smaller is steeper (train/wdl.py)
 KEEP_BEST=${KEEP_BEST:-1}               # 1: each candidate is the epoch with the lowest validation loss; 0: the last
@@ -62,10 +66,10 @@ last=${2:-5}
 for v in GAMES NODES; do
     [[ "${!v}" =~ ^[1-9][0-9]*$ ]] || { echo "$v must be a positive number (got '${!v}')" >&2; exit 1; }
 done
-for v in HISTORY MAX_POSITIONS PROGRESS_EVERY BOOK_RANDOM_SHARE MATCH_RANDOM_SHARE; do
+for v in HISTORY MAX_POSITIONS PROGRESS_EVERY RANDOM_OPENINGS OPENING_MIN_SCORE OPENING_MAX_SCORE MATCH_RANDOM_SHARE; do
     [[ "${!v}" =~ ^[0-9]+$ ]] || { echo "$v must be a number (got '${!v}')" >&2; exit 1; }
 done
-for v in BOOK_RANDOM_SHARE MATCH_RANDOM_SHARE; do
+for v in RANDOM_OPENINGS MATCH_RANDOM_SHARE; do
     (( ${!v} <= 100 )) || { echo "$v is a percentage, 0-100 (got ${!v})" >&2; exit 1; }
 done
 for v in BOOK MATCH_BOOK; do
@@ -110,10 +114,18 @@ printf '%s\n' "$(printf '=%.0s' $(seq 100))"
 printf ' tsumi training loop: generations %s to %s%s\n' "$first" "$last" "$([[ "$last" -ge 9999 ]] && echo " (until stopped)")"
 printf '%s\n' "$(printf '=%.0s' $(seq 100))"
 kv "data"       "$GAMES games per generation at $NODES nodes, $THREADS threads; random moves on $RANDOM_MOVE_PCT% of plies $RANDOM_MOVE_MINPLY-$((RANDOM_MOVE_MAXPLY - 1)) (top $RANDOM_MULTI_PV within $RANDOM_MULTI_PV_DIFF millipawns); recorded from ply $WRITE_MIN_PLY"
-kv "openings"   "$(if [[ -n "$BOOK" || "$BOOK_RANDOM_SHARE" -gt 0 ]]; then
-                       echo "a book per generation: $BOOK_RANDOM_SHARE% random-play positions, the rest ${BOOK:+drawn from }${BOOK:-the start position}"
-                   else echo "the start position"; fi)"
+openings=""
+if [[ "$RANDOM_OPENINGS" -gt 0 ]]; then
+    openings="$RANDOM_OPENINGS% random-play positions"
+    [[ "$OPENING_MAX_SCORE" -gt 0 ]] && openings+=" within $OPENING_MIN_SCORE-$OPENING_MAX_SCORE millipawns"
+fi
+[[ "$RANDOM_OPENINGS" -lt 100 ]] && openings="${openings:+$openings, the rest }${BOOK:+drawn from }${BOOK:-the start position}"
+kv "openings"   "$openings"
 kv "training"   "$HIDDEN units, $EPOCHS epochs, lr $LR warm start / $LR_SCRATCH from scratch, lambda $LAMBDA$([[ "$LAMBDA" != "$END_LAMBDA" ]] && echo " -> $END_LAMBDA"), anchor p $ANCHOR_P$([[ "$KEEP_BEST" == 1 ]] && echo ", the best epoch kept")"
+regularisers=""
+[[ "$RESULT_FILTER" == 1 ]] && regularisers="results the score model finds unlikely mostly dropped"
+[[ "$LOSS_ASYMMETRY" != 0 ]] && regularisers="${regularisers:+$regularisers, }loss weighted 1 + $LOSS_ASYMMETRY where the network is more optimistic than the target"
+[[ -n "$regularisers" ]] && kv "" "$regularisers"
 kv ""           "history $([[ "$HISTORY" == 0 ]] && echo "all generations labelled by the same network" || echo "up to $HISTORY generations labelled by the same network")$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions"), $([[ "$RESUME" == 1 ]] && echo "warm-started from the best network's checkpoint$([[ -f "$best.pt" ]] || echo " (none yet: from scratch until a candidate is accepted)")" || echo "from scratch")"
 kv "match"      "$MATCH_GAMES games $([[ -n "$MATCH_TC" ]] && echo "at $MATCH_TC" || echo "at $MATCH_NODES nodes"), $CONCURRENCY at a time; a candidate replaces $best unless it scores below it"
 kv ""           "openings: $([[ -n "$MATCH_BOOK" ]] && echo "$((100 - MATCH_RANDOM_SHARE))% drawn from $MATCH_BOOK, $MATCH_RANDOM_SHARE% reached by " || echo "")8 random plies from the start position"
@@ -236,16 +248,17 @@ for gen in $(seq "$first" "$last"); do
         rm -f "$trained"
         source_id > "data/gen$gen/source"
         bookopt=()
-        if [[ -n "$BOOK" || "$BOOK_RANDOM_SHARE" -gt 0 ]]; then
+        if [[ -n "$BOOK" && "$RANDOM_OPENINGS" -lt 100 ]]; then   # the games that do not start from a random-play position
             if [[ -f "data/gen$gen/book.epd" ]]; then
                 kv "book" "data/gen$gen/book.epd (kept: datagen resumes from the games already played)"
             else
-                python3 tools/gen_book.py --count "$GAMES" --random-share "$BOOK_RANDOM_SHARE" ${BOOK:+--base "$BOOK"} \
+                python3 tools/gen_book.py --count "$(( (GAMES * (100 - RANDOM_OPENINGS) + 99) / 100 ))" --base "$BOOK" \
                     --seed "$((gen + 1))" --out "data/gen$gen/book.epd"
             fi
             bookopt=(--book "data/gen$gen/book.epd")
         fi
         ./tsumi datagen --net "$best" --threads "$THREADS" --games "$GAMES" --nodes "$NODES" "${bookopt[@]}" \
+            --random-openings "$RANDOM_OPENINGS" --opening-min-score "$OPENING_MIN_SCORE" --opening-max-score "$OPENING_MAX_SCORE" \
             --random-move-pct "$RANDOM_MOVE_PCT" --random-move-minply "$RANDOM_MOVE_MINPLY" --random-move-maxply "$RANDOM_MOVE_MAXPLY" \
             --random-multi-pv "$RANDOM_MULTI_PV" --random-multi-pv-diff "$RANDOM_MULTI_PV_DIFF" --write-min-ply "$WRITE_MIN_PLY" \
             --seed "$((gen * 1000 + 1))" --out "data/gen$gen/data.bin" --log "data/gen$gen/games.log" --resume | tee -ai "logs/datagen_gen$gen.log"
@@ -276,9 +289,10 @@ for gen in $(seq "$first" "$last"); do
         trainopt=(--lr "$LR_SCRATCH")
         if [[ "$RESUME" == 1 && -f "$best.pt" ]]; then trainopt=(--resume "$best.pt" --lr "$LR"); fi
         if [[ "$KEEP_BEST" == 1 ]]; then trainopt+=(--keep-best); fi
+        if [[ "$RESULT_FILTER" != 1 ]]; then trainopt+=(--no-result-filter); fi
         python3 train/train.py --data "${datafiles[@]}" --out "$net" --hidden "$HIDDEN" --epochs "$EPOCHS" --lambda "$LAMBDA" \
-            --end-lambda "$END_LAMBDA" --anchor-p "$ANCHOR_P" --max-positions "$MAX_POSITIONS" --progress-every "$PROGRESS_EVERY" \
-            ${DEVICE:+--device "$DEVICE"} "${trainopt[@]}" | tee -i "logs/train_gen$gen.log"
+            --end-lambda "$END_LAMBDA" --loss-asymmetry "$LOSS_ASYMMETRY" --anchor-p "$ANCHOR_P" --max-positions "$MAX_POSITIONS" \
+            --progress-every "$PROGRESS_EVERY" ${DEVICE:+--device "$DEVICE"} "${trainopt[@]}" | tee -i "logs/train_gen$gen.log"
         python3 train/verify_net.py --net "$net" --data "data/gen$gen/data.bin" --count 100
         touch "$trained"
     fi

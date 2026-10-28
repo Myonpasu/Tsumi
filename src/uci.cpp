@@ -375,7 +375,9 @@ int datagen_main(int argc, char** argv) {
     std::string evalFile;
     const char* usage =
         "usage: tsumi datagen [--net FILE] [--threads N] [--games N] [--nodes N] [--out FILE] [--log FILE] [--resume]\n"
-        "                     [--book FILE] [--seed N] [--hash MB] [--max-plies N] [--write-min-ply N] [--dedup-mb MB]\n"
+        "                     [--random-openings P] [--random-plies-min N] [--random-plies-max N]\n"
+        "                     [--opening-min-score D] [--opening-max-score D] [--book FILE]\n"
+        "                     [--seed N] [--hash MB] [--max-plies N] [--write-min-ply N] [--dedup-mb MB]\n"
         "                     [--random-move-pct P] [--random-move-minply N] [--random-move-maxply N]\n"
         "                     [--random-multi-pv N] [--random-multi-pv-diff D]\n"
         "                     [--adj-draw-minply N] [--adj-draw-score D] [--adj-draw-plies N]\n"
@@ -392,6 +394,11 @@ int datagen_main(int argc, char** argv) {
         else if ((v = p.value("--out"))) opt.out = v;
         else if ((v = p.value("--log"))) opt.log = v;
         else if (a == "--resume") opt.resume = true;
+        else if ((v = p.value("--random-openings"))) opt.randomOpeningPct = std::atoi(v);
+        else if ((v = p.value("--random-plies-min"))) opt.randomPliesMin = std::atoi(v);
+        else if ((v = p.value("--random-plies-max"))) opt.randomPliesMax = std::atoi(v);
+        else if ((v = p.value("--opening-min-score"))) opt.openingMinScore = std::atoi(v);
+        else if ((v = p.value("--opening-max-score"))) opt.openingMaxScore = std::atoi(v);
         else if ((v = p.value("--book"))) opt.book = v;
         else if ((v = p.value("--seed"))) opt.seed = std::strtoull(v, nullptr, 10);
         else if ((v = p.value("--hash"))) opt.hashMB = std::max(1, std::atoi(v));
@@ -410,6 +417,12 @@ int datagen_main(int argc, char** argv) {
     }
     if (opt.nodes == 0) { std::printf("datagen: --nodes must be at least 1\n"); return 1; }
     if (opt.randomMovePct > 0 && opt.randomMultiPV < 2) { std::printf("datagen: --random-multi-pv must be at least 2 (--random-move-pct 0 for no random moves)\n"); return 1; }
+    if (opt.randomOpeningPct < 0 || opt.randomOpeningPct > 100) { std::printf("datagen: --random-openings is a percentage, 0-100\n"); return 1; }
+    if (opt.randomPliesMin < 1 || opt.randomPliesMax < opt.randomPliesMin) { std::printf("datagen: --random-plies-min must be at least 1 and at most --random-plies-max\n"); return 1; }
+    if (opt.openingMinScore < 0 || opt.openingMaxScore < 0 || (opt.openingMaxScore > 0 && opt.openingMaxScore < opt.openingMinScore)) {
+        std::printf("datagen: --opening-min-score and --opening-max-score are millipawns, the first at most the second (0 and 0: no check)\n");
+        return 1;
+    }
     if (!load_net_or_report(evalFile)) return 1;
     return run_datagen(opt) ? 0 : 1;
 }

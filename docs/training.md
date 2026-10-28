@@ -47,8 +47,9 @@ The settings are environment variables:
 |---|---|---|
 | `THREADS` | all cores | datagen threads |
 | `GAMES` | 20000 | games per generation |
-| `NODES` | 10000 | search nodes per move in datagen |
-| `BOOK_RANDOM_SHARE` | 50 | % of each generation's games that start from a random-play position (8–12 random plies) |
+| `NODES` | 10000 | search nodes per move in datagen (a soft budget: the search finishes its iteration) |
+| `RANDOM_OPENINGS` | 50 | % of each generation's games that start from a random-play position (8–12 random plies) |
+| `OPENING_MIN_SCORE`, `OPENING_MAX_SCORE` | 500, 2000 | a random-play position is played when a search scores it within these millipawns, for either side (`OPENING_MAX_SCORE=0`: no check) |
 | `BOOK` | | the other games start from positions drawn from this book ([opening books](#opening-books)); without one, from the start position |
 | `RANDOM_MOVE_PCT`, `RANDOM_MOVE_MINPLY`, `RANDOM_MOVE_MAXPLY` | 40, 0, 20 | random moves on 40% of plies 0–19 |
 | `RANDOM_MULTI_PV`, `RANDOM_MULTI_PV_DIFF` | 4, 250 | a random move is one of the best 4 within 0.25 pawns of the best |
@@ -56,7 +57,9 @@ The settings are environment variables:
 | `HIDDEN` | 1024 | network width (units per side), a multiple of 64; must match the checkpoint it warm-starts from |
 | `EPOCHS` | 6 | epochs per generation (the learning rate halves every 3) |
 | `LR`, `LR_SCRATCH` | 1e-5, 1e-3 | learning rate when warm-starting, and from scratch |
-| `LAMBDA`, `END_LAMBDA` | 0.8, 0.8 | weight of the search score against the game result, at the first and last epoch (moved linearly between them) |
+| `LAMBDA`, `END_LAMBDA` | 0.8, 0.5 | weight of the search score against the game result, at the first and last epoch (moved linearly between them) |
+| `RESULT_FILTER` | 1 | train on a position with the probability the score model gives its game's result (0: on every position) |
+| `LOSS_ASYMMETRY` | 0.2 | weight the loss 1 + this where the network is more optimistic than the target |
 | `ANCHOR_P` | 0.01 | the output curve's win probability at 0 (see [output units](#output-units)) |
 | `KEEP_BEST` | 1 | keep the epoch with the lowest validation loss (0: the last) |
 | `HISTORY`, `MAX_POSITIONS` | 10, 0 | at most this many generations of same-network data (0: all), and positions (0: no cap) |
@@ -75,17 +78,28 @@ well above it.
 
 ```bash
 mkdir -p data/gen0
-python3 tools/gen_book.py --count 20000 --random-share 50 --out data/gen0/book.epd
-./tsumi datagen --net nets/best.nnue --threads 32 --games 20000 --nodes 10000 --book data/gen0/book.epd \
+./tsumi datagen --net nets/best.nnue --threads 32 --games 20000 --nodes 10000 \
     --out data/gen0/data.bin --log data/gen0/games.log
 ```
 
-Each game starts from the start position or, with `--book`, from the next position of the book (taken in a
-random order, each once, as described under [opening books](#opening-books)). The engine plays at about
-`--nodes` nodes per move (each search gets 80–120% of it). Every position the search scores is a candidate for
-recording, except positions in check or whose best move is a capture (their scores are tactical), positions
-before `--write-min-ply`, and positions already recorded in this run. A record holds the position, the search
-score, and, once the game ends, its result.
+Half of the games (`--random-openings`) start from a random-play position, the others from the start position
+or, with `--book`, from the next position of the book (taken in a random order, each once, as described under
+[opening books](#opening-books)). The engine plays at about `--nodes` nodes per move. The budget is soft, as
+in other engines' data generation: each search gets 80–120% of it and finishes the iteration in which it
+reaches that, so that every score comes from a completed depth, with a hard stop at five times it. Every
+position the search scores is a candidate for recording, except positions in check or whose best move is a
+capture (their scores are tactical), positions before `--write-min-ply`, and positions already recorded in
+this run. A record holds the position, the search score, and, once the game ends, its result.
+
+**Random-play openings.** A random-play position is reached by `--random-plies-min` to `--random-plies-max`
+(8–12) uniformly random legal plies from the start position, and it is played only when a search at the
+game's node budget scores it within `--opening-min-score` and `--opening-max-score` (500–2000 millipawns),
+for either side. Games from balanced openings are mostly drawn in selfmate, so these openings give one side the
+upper hand without deciding the game, as the unbalanced books of chess engine testing do. The window roughly
+doubles the share of decisive games: with Tsumi 1.0 at 2,000 nodes per move, 29% of 120 games from
+unwindowed random-play positions were decisive, 53% with the default window and 71% with 800–2500. About
+every second position tried falls within the default window, and the searches that find out cost a fraction
+of a percent of the games. Datagen reports the share kept.
 
 **Random moves.** On `--random-move-pct` % of the plies from `--random-move-minply` to
 `--random-move-maxply` − 1, a second search with `--random-multi-pv` lines picks one of the moves within
@@ -99,6 +113,9 @@ score alone. Datagen reports how often that happens.
 ±`--adj-draw-score` (10) millipawns from ply `--adj-draw-minply` (120) on, or from any ply when a side has a
 bare king. `--max-plies` (400) ends a game as a draw.
 
+A result that does not fit a position for another reason, a mistake at engine strength late in the game, say,
+is left to the trainer's result filter (below).
+
 `--resume` continues an interrupted run (it needs the `--log`, where the games are counted). Without it, the
 output is appended to. `tsumi datagen --help` lists every option, and the defaults are in `src/datagen.h`.
 
@@ -108,9 +125,10 @@ A book is a file with a FEN or an EPD line per position (EPD operations after th
 ignored), or a PGN file of opening lines, each game played to its end. The pipeline's `BOOK` and
 `MATCH_BOOK`, `tools/gen_book.py --base`, and `tools/match.py --book` read both, plain or in a .zip, as the
 books of the [Stockfish books repository](https://github.com/official-stockfish/books) come.
-`tsumi datagen --book` reads a plain FEN/EPD file, which is what the pipeline hands it. Entries without a
-position a game can start from are left out, and the tools say how many. Datagen takes a book's positions in
-a random order, each once, and `match.py` plays each opening once with both colours.
+`tsumi datagen --book` reads a plain FEN/EPD file, which `tools/gen_book.py` draws from a book for it (the
+pipeline does this for each generation). Entries without a position a game can start from are left out, and
+the tools say how many. Datagen takes a book's positions in a random order, each once, and `match.py` plays
+each opening once with both colours.
 
 `UHO_Lichess_4852_v1.epd.zip` there (unbalanced human openings) holds 2.6 million positions from Lichess
 games, 2–16 plies into the game. With it as `BOOK`, the games that do not start from a random-play position
@@ -122,11 +140,10 @@ mkdir -p books && curl -L -o books/UHO_Lichess_4852_v1.epd.zip \
 BOOK=books/UHO_Lichess_4852_v1.epd.zip tools/pipeline.sh 0 9999
 ```
 
-`BOOK_RANDOM_SHARE=0` starts every game from the book. In selfmate these openings produce more decisive games
-than the start position but fewer than random-play positions (17%, 11%, and 32% respectively, over 600 games
-each at 5,000 nodes per move), so the random-play share is worth keeping. Stefan Pohl's
-PGN books in the same repository, such as `UHO_XXL_2022_+120_+149.pgn.zip` (226,629 lines of 8 moves after
-which White stands 1.20–1.49 pawns better), work the same way.
+`RANDOM_OPENINGS=0` starts every game from the book. In selfmate these openings produce more decisive games
+than the start position but fewer than random-play positions. Stefan Pohl's PGN books in the same repository,
+such as `UHO_XXL_2022_+120_+149.pgn.zip` (226,629 lines of 8 moves after which White stands 1.20–1.49 pawns
+better), work the same way.
 
 The acceptance matches open with 8 random plies from the start position, never with the start position
 itself (a deterministic engine would play the same game over and over).
@@ -150,17 +167,26 @@ target = λ · model(score) + (1 − λ) · result
 ```
 
 `model` is a win/draw/loss model of the search scores fitted to the run's own data (`train/wdl.py`), so that
-the two parts agree on average. λ is `--lambda` (0.8). With a different `--end-lambda` it moves linearly from
-the one to the other over the epochs.
+the two parts agree on average. λ moves linearly from `--lambda` (0.8) at the first epoch to `--end-lambda`
+(0.5) at the last. The scores are smooth labels that guide the early epochs, and the results, which hold
+what the shallow searches behind the scores could not see, weigh more at the end.
+
+**Result filter.** A position is trained on with the probability the fitted model gives the result its game
+had, so a result the score makes unlikely, a won position lost to a later mistake,
+say, mostly drops out rather than teach the network the mistake. The positions without a result label are
+all kept, the held-out positions are filtered the same way, and `--no-result-filter` turns it off. It keeps
+most position.
 
 ### Output units
 
 The network's output *y* goes through a fixed curve, on which the side to move wins with probability
 `win(y) = 1 / (1 + (1/p − 1)^(1 − y))` and loses with probability `win(−y)`, *p* being `--anchor-p` (0.01).
-The loss is the squared difference between the expected result on that curve and the target. An output of
-+1 is therefore a 50% chance of winning, whatever the scale of the search scores the network learnt from,
-and the engine shows it as +1.00. The smaller *p*, the steeper the curve and the less weight balanced
-positions get.
+The loss is the squared difference between the expected result on that curve and the target, weighted
+1 + `--loss-asymmetry` (1.2) where the network is more optimistic than the target, since an evaluation too
+high misleads a search more than one too low (Stockfish and PlentyChess weight their losses the same way).
+An output of +1 is therefore a 50% chance of winning, whatever the scale of the search scores the network
+learnt from, and the engine shows it as +1.00. The smaller *p*, the steeper the curve and the less weight
+balanced positions get.
 
 ### The table
 

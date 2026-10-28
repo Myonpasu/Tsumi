@@ -28,20 +28,29 @@ struct TrainingRecord {
 };
 static_assert(sizeof(TrainingRecord) == 32, "TrainingRecord must be 32 bytes");
 
-// Self-play games for training data, after Stockfish's generator.  Every game starts from the start position or
-// the next position of --book (in a random order, each position once) and is played by the engine at a fixed node
-// budget; variety comes from random moves on a share of the opening plies, each one of the best few moves of a
+// Self-play games for training data, after Stockfish's generator.  A game starts from a random-play position (a few
+// uniformly random plies from the start position, kept when a search scores it within a window: one side has the
+// upper hand, which makes the game more often decisive, but the position is not decided) or else from the next
+// position of --book (in a random order, each position once) or the start position.  The engine plays at a fixed node
+// budget; variety also comes from random moves on a share of the opening plies, each one of the best few moves of a
 // MultiPV search (Stockfish's random_multi_pv).
 // Since many games open alike, the first plies are not recorded (write_min_ply), nor is a position already
 // recorded in this run (was_seen_before).
 struct DatagenOptions {
     int threads = 1;
     uint64_t games = 1000;
-    uint64_t nodes = 10000;      // search nodes per move; each search gets 80-120% of it
+    uint64_t nodes = 10000;      // search nodes per move: a search finishes the iteration in which it reaches 80-120% of
+                                 // this (varied per search) and is cut off at NODES_HARD_FACTOR times that
     int maxPlies = 400;          // a game still going after this many plies is a draw
     uint64_t seed = 1;
     std::string out = "data.bin";
-    std::string book;            // file of starting positions, a FEN or EPD line each (default: the start position)
+    std::string book;            // file of starting positions, a FEN or EPD line each, for the games that do not start
+                                 // from a random-play position (default: the start position)
+    int randomOpeningPct = 50;   // this percentage of the games start from a random-play position ...
+    int randomPliesMin = 8;      // ... of randomPliesMin to randomPliesMax random legal plies from the start position ...
+    int randomPliesMax = 12;
+    int openingMinScore = 500;   // ... kept when a search at `nodes` scores it, for either side, within these bounds
+    int openingMaxScore = 2000;  //     (internal units; openingMaxScore 0: no check)
     int adjDrawMinPly = 120;     // a game is adjudicated a draw from this ply on (from any ply with a bare king on the
     int adjDrawScore = 10;       // board) once adjDrawPlies searches in a row have scored within +-adjDrawScore
     int adjDrawPlies = 16;
@@ -58,6 +67,10 @@ struct DatagenOptions {
                                  // the positions already in --out go back into the dedup table, and the seed moves on,
                                  // so the new games are not the old ones again
 };
+
+// The node budget of a datagen or rescore search is soft: the search completes the iteration in which it reaches it,
+// so that its score comes from a finished depth, and is cut off at this multiple of it.
+constexpr uint64_t NODES_HARD_FACTOR = 5;
 
 bool run_datagen(const DatagenOptions& opt);   // false, having said why, if it could not run
 

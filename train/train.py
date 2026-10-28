@@ -10,19 +10,27 @@ side to move (1 a win, 0.5 a draw, 0 a loss):
     target = lambda * model(score) + (1 - lambda) * result
 where model is a win/draw/loss model of the search scores fitted to this run's own game results (train/wdl.py),
 so that the two parts agree in expectation.  lambda moves linearly from --lambda at the first epoch to
---end-lambda at the last.  A position without a result label (flags bit 1 in src/datagen.h) uses its score alone.
+--end-lambda at the last, towards the results by default: the scores are smooth labels that guide the early
+epochs, and the results, which hold what the shallow searches behind the scores could not see, weigh more at the
+end.  A position without a result label (flags bit 1 in src/datagen.h) uses its score alone.
 
-Output units.  The network's output y goes through a fixed curve: the side to move wins with probability
+Result filter.  A position is kept with the probability the score model gives the result its game had (Stockfish's
+wld filter), so a result the score makes unlikely, a won position lost to a later mistake say, mostly drops out
+rather than teach the network the mistake.  --no-result-filter keeps every position.
+
+Loss.  The network's output y goes through a fixed curve: the side to move wins with probability
 win(y) = 1 / (1 + (1/p - 1)^(1 - y)) and loses with win(-y), p being --anchor-p, and the loss is the squared
-difference between the expected result on that curve and the target.  So an output of +1 is a 50% chance of
-winning, whatever the scale of the search scores the network learnt from; the engine multiplies y by SCALE
-(1000) into its internal units and shows it as +1.00.
+difference between the expected result on that curve and the target, weighted 1 + --loss-asymmetry where the
+network is more optimistic than the target (an evaluation too high misleads a search more than one too low).  An
+output of +1 is a 50% chance of winning, whatever the scale of the search scores the network learnt from; the
+engine multiplies y by SCALE (1000) into its internal units and shows it as +1.00.
 
 Validation.  Whole games holding --val-fraction of the positions are held out (the positions of a game are alike
-and share its result, so a split by position would reward memorising games).  The table's train and val losses
-are both measured against the target at the final lambda, which keeps them comparable from epoch to epoch;
-"vs score" and "vs result" are the held-out positions against the search score and the game result alone.
---keep-best writes the epoch with the lowest val loss rather than the last.
+and share its result, so a split by position would reward memorising games), and filtered like the training
+positions.  The table's train and val losses are both measured against the target at the final lambda, which
+keeps them comparable from epoch to epoch; "vs score" and "vs result" are the held-out positions against the
+search score and the game result alone.  --keep-best writes the epoch with the lowest val loss rather than the
+last.
 
 --resume continues from a .pt checkpoint (as the pipeline does whenever nets/best.nnue.pt exists).  The learning
 rate is multiplied by --lr-decay every --lr-step epochs.  The .nnue is written with its units reordered for the
@@ -150,6 +158,19 @@ def make_targets(recs, lam, model):
     return (lam_eff * p_score + (1.0 - lam_eff) * result).astype(np.float32)
 
 
+def result_filter(data, idx, model, rng, chunk=1 << 20):
+    """The indices in idx (sorted) of the positions kept by the result filter: each with the probability the score model
+    gives the result its game had, and all of those without a result label."""
+    keep = np.ones(len(idx), dtype=bool)
+    for a in range(0, len(idx), chunk):
+        recs = data[idx[a:a + chunk]]
+        win, draw, loss = model.wdl_np(recs["score"].astype(np.float64))
+        res = results_stm(recs)
+        p = np.where(res > 0, win, np.where(res < 0, loss, draw))
+        keep[a:a + chunk] = ~has_result(recs) | (rng.random(len(recs)) < p)
+    return idx[keep]
+
+
 def extract(recs, stats):
     """The model's inputs for a batch of records (numpy arrays, in the order of NNUE.forward)."""
     psq_us, psq_them, thr_us, thr_them, extras, bucket, truncated = batch_features(recs)
@@ -192,7 +213,11 @@ def main():
     ap.add_argument("--lr-step", type=int, default=3, help="epochs between those decays (default 3)")
     ap.add_argument("--lambda", dest="lam", type=float, default=0.8,
                     help="weight of the search score against the game result in the target at the first epoch (default 0.8; 1: the score alone)")
-    ap.add_argument("--end-lambda", dest="end_lam", type=float, default=0.8, help="... and at the last epoch (default 0.8)")
+    ap.add_argument("--end-lambda", dest="end_lam", type=float, default=0.5, help="... and at the last epoch (default 0.5)")
+    ap.add_argument("--result-filter", action=argparse.BooleanOptionalAction, default=True,
+                    help="keep a position with the probability the score model gives its game's result (default on)")
+    ap.add_argument("--loss-asymmetry", type=float, default=0.2,
+                    help="weight the loss 1 + this where the network is more optimistic than the target (default 0.2; 0: none)")
     ap.add_argument("--anchor-p", type=anchor_probability, default=ANCHOR_P,
                     help=f"the win probability at an output of 0 on the curve the output goes through, a decimal or a fraction "
                          f"(default {ANCHOR_P:g}); smaller is steeper and gives balanced positions less weight")
@@ -212,6 +237,8 @@ def main():
         sys.exit("--progress-every and --epochs must not be negative, --batch and --lr-step must be positive")
     if not 0.0 <= args.val_fraction < 1.0:
         sys.exit("--val-fraction must be at least 0 and below 1")
+    if not 0.0 <= args.lam <= 1.0 or not 0.0 <= args.end_lam <= 1.0 or args.loss_asymmetry < 0.0:
+        sys.exit("--lambda and --end-lambda must be between 0 and 1, --loss-asymmetry at least 0")
     if args.hidden % 64 or not 0 < args.hidden <= 4096:
         sys.exit("--hidden must be a multiple of 64, at most 4096")
     if args.threads:
@@ -223,8 +250,6 @@ def main():
 
     data = load_data(args.data, args.max_positions)
     val_idx, train_idx, val_games, n_games = split_by_game(data, args.val_fraction, rng)
-    val_recs = data[val_idx]
-    del val_idx
     # The score model is fitted, and the data described, on a sample of the training positions when there are more
     # than FIT_SAMPLE: the fit needs no more, and a copy of all of them would cost as much memory as the data.
     FIT_SAMPLE = 5_000_000
@@ -234,7 +259,7 @@ def main():
     del fit_idx
     labelled = has_result(sample)
     res = sample["result"][labelled]
-    kv("split", f"{len(train_idx):,} positions to train on, {len(val_recs):,} to validate on ({val_games:,} of the "
+    kv("split", f"{len(train_idx):,} positions to train on, {len(val_idx):,} to validate on ({val_games:,} of the "
                 f"{n_games:,} games, held out whole)")
     kv("results", f"white {np.mean(res == 1):.1%}, black {np.mean(res == -1):.1%}, draw {np.mean(res == 0):.1%} of the "
                   f"training positions{sampled}")
@@ -265,6 +290,20 @@ def main():
     score_model, _ = fit_wdl(sample["score"][fit_sel].astype(np.float64), results_stm(sample[fit_sel]))
     kv("score model", f"win/draw/loss, fitted to {fit_sel.sum():,} positions with a result label: {score_model.describe()}")
     del sample
+    if args.result_filter:
+        before = len(train_idx), len(val_idx)
+        train_idx = result_filter(data, train_idx, score_model, rng)
+        val_idx = result_filter(data, val_idx, score_model, rng)
+        kv("result filter", f"{len(train_idx):,} of the {before[0]:,} training positions kept ({len(train_idx) / max(before[0], 1):.1%}) "
+                            f"and {len(val_idx):,} of the {before[1]:,} held out: each with the probability the score model gives "
+                            "the result its game had")
+    val_recs = data[val_idx]
+    del val_idx
+    if args.loss_asymmetry:
+        kv("loss", f"squared error of the expected result, weighted {1.0 + args.loss_asymmetry:g} where the network is more "
+                   "optimistic than the target")
+    else:
+        kv("loss", "squared error of the expected result")
     # The curve the output goes through.
     curve = anchored_curve(args.anchor_p)
     w0, d0, _ = (float(v) for v in curve.wdl_np(0.0))
@@ -287,6 +326,13 @@ def main():
 
     final_lam = args.end_lam
 
+    def loss_of(p, target):
+        """The loss of each position: squared error, weighted where the network is more optimistic than the target."""
+        err = (p - target) ** 2
+        if args.loss_asymmetry:
+            err = err * (1.0 + args.loss_asymmetry * (p > target).to(err.dtype))
+        return err
+
     def validate(recs):
         """The held-out positions' losses against the target at the final lambda, against the search score alone and
         against the game result alone (the last on the positions with a result label)."""
@@ -299,7 +345,7 @@ def main():
                 p = curve.prob_torch(model(*to_device(extract(chunk, stats))))
                 labelled = torch.from_numpy(has_result(chunk)).to(device)
                 for k, lam in enumerate(lambdas):
-                    err = (p - torch.from_numpy(make_targets(chunk, lam, score_model)).to(device)) ** 2
+                    err = loss_of(p, torch.from_numpy(make_targets(chunk, lam, score_model)).to(device))
                     if k == 2:
                         err = err[labelled]
                     sums[k] += err.sum().item()
@@ -394,7 +440,7 @@ def main():
             for inputs, target, shown_target in batch_iter(data, train_idx, args.batch, lam, final_lam, score_model, stats, rng):
                 target_t = torch.from_numpy(target).to(device, non_blocking=True)
                 p = curve.prob_torch(model(*to_device(inputs, non_blocking=True)))
-                loss = ((p - target_t) ** 2).mean()
+                loss = loss_of(p, target_t).mean()
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 opt.step()
@@ -403,7 +449,7 @@ def main():
                     shown = loss.item()
                 else:
                     with torch.no_grad():
-                        shown = ((p.detach() - torch.from_numpy(shown_target).to(device)) ** 2).mean().item()
+                        shown = loss_of(p.detach(), torch.from_numpy(shown_target).to(device)).mean().item()
                 seen += len(target)
                 loss_sum += shown * len(target)
                 if args.progress_every and seen >= next_row:

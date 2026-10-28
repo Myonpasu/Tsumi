@@ -807,7 +807,10 @@ SearchResult Thread::iterative_deepening() {
             } else if (lim.movetime > 0 && ms >= shared.tm.optimum()) { shared.stop = true; break; }
             iterValue[iterIdx] = score;
             iterIdx = (iterIdx + 1) & 3;
-            if (lim.nodes && shared.total_nodes() >= lim.nodes) { shared.stop = true; break; }
+            if (const uint64_t total = shared.total_nodes(); (lim.nodes && total >= lim.nodes) || (lim.softNodes && total >= lim.softNodes)) {
+                shared.stop = true;
+                break;
+            }
             // A proven mate needs no deeper search.
             if (multiPV == 1 && is_mate_score(score) && depth >= 10 && !lim.infinite && lim.depth == 0) { shared.stop = true; break; }
         }

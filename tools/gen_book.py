@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""Write a book of starting positions for `tsumi datagen --book`, one FEN per line.
+"""Write a book of starting positions for `tsumi datagen --book`, one FEN per line, drawn at random from another book.
 
-    python3 tools/gen_book.py --count 20000 --random-share 50 --out data/gen0/book.epd
-    python3 tools/gen_book.py --count 20000 --random-share 50 --base UHO_Lichess_4852_v1.epd.zip --out data/gen0/book.epd
+    python3 tools/gen_book.py --count 10000 --base UHO_Lichess_4852_v1.epd.zip --out data/gen0/book.epd
 
---random-share P makes P% of the lines positions reached by --plies-min to --plies-max random legal moves from the
-start position.  The other lines are the start position itself, or with --base positions drawn at random from
-another book: a file with a FEN or an EPD line per position, or a PGN file of opening lines (each game played to its
-end), either one plain or in a .zip, as the Stockfish opening books come (https://github.com/official-stockfish/books).
-Games from the start position or from book openings cover the real opening (datagen's random moves branch them);
-games from random-play positions are unbalanced and cover the decisive phase, which games from the start position
-mostly lack.
+The base book is a file with a FEN or an EPD line per position, or a PGN file of opening lines (each game played to
+its end), either one plain or in a .zip, as the Stockfish opening books come
+(https://github.com/official-stockfish/books).  Datagen makes its own random-play openings; the book is for the
+games that cover the real opening.
 """
 import argparse
 import io
@@ -23,18 +19,6 @@ import chess
 import chess.pgn
 
 logging.getLogger("chess.pgn").setLevel(logging.CRITICAL)   # a game that does not parse is counted, not reported
-
-
-def random_play_position(rng: random.Random, plies_min: int, plies_max: int) -> chess.Board:
-    while True:
-        b = chess.Board()
-        for _ in range(rng.randint(plies_min, plies_max)):
-            moves = list(b.legal_moves)
-            if not moves:
-                break
-            b.push(rng.choice(moves))
-        if not b.is_game_over():
-            return b
 
 
 def book_name(path):
@@ -137,51 +121,31 @@ def draw_positions(path, k, rng):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--count", type=int, default=10000, help="lines to write (default 10000)")
-    ap.add_argument("--random-share", type=int, default=100, help="percentage of the lines that are random-play positions (default 100)")
-    ap.add_argument("--plies-min", type=int, default=8, help="random plies from the start position: uniform from this ... (default 8)")
-    ap.add_argument("--plies-max", type=int, default=12, help="... to this (default 12)")
-    ap.add_argument("--base", metavar="BOOK", help="draw the other lines from this book (FEN/EPD lines or PGN games, plain or zipped) "
-                                                   "instead of using the start position")
+    ap.add_argument("--count", type=int, default=10000, help="positions to write (default 10000)")
+    ap.add_argument("--base", metavar="BOOK", required=True, help="the book to draw them from (FEN/EPD lines or PGN games, plain or zipped)")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
-    if not 0 <= args.random_share <= 100 or not 0 <= args.plies_min <= args.plies_max:
-        ap.error("--random-share must be 0-100, and 0 <= --plies-min <= --plies-max")
-    if args.base and not os.path.isfile(args.base):
+    if args.count < 1:
+        ap.error("--count must be at least 1")
+    if not os.path.isfile(args.base):
         ap.error(f"--base: {args.base} not found")
     rng = random.Random(args.seed)
-    lines = []
-    for _ in range(args.count):
-        if rng.randrange(100) < args.random_share:
-            lines.append(random_play_position(rng, args.plies_min, args.plies_max).fen())
-        else:
-            lines.append(None)   # the start position, or a position of the base book
-    n_other = lines.count(None)
-    n_random = args.count - n_other
-    if n_other == 0:
-        other, others = [], "no others"
-    elif not args.base:
-        other, others = [chess.Board().fen()] * n_other, f"{n_other:,} times the start position"
-    else:
-        boards, size, bad = draw_positions(args.base, n_other, rng)
-        if not boards:
-            raise SystemExit(f"{args.base} holds no position to start from (a FEN or an EPD line per position, or PGN games)")
-        other = [b.fen() for b in boards]
-        others = f"{n_other:,} positions drawn from {os.path.basename(args.base)} ({size})"
-        if bad:
-            others += f"; {bad:,} of the entries drawn held no position to start from and were left out"
-        if len(other) < n_other:   # a book with too few positions: they repeat
-            others += f"; it has only {len(other):,} position{'s' if len(other) != 1 else ''}, so they repeat"
-            other += [rng.choice(other) for _ in range(n_other - len(other))]
-            rng.shuffle(other)
-    it = iter(other)
-    lines = [next(it) if line is None else line for line in lines]
+    boards, size, bad = draw_positions(args.base, args.count, rng)
+    if not boards:
+        raise SystemExit(f"{args.base} holds no position to start from (a FEN or an EPD line per position, or PGN games)")
+    lines = [b.fen() for b in boards]
+    drawn = f"{len(lines):,} positions drawn from {os.path.basename(args.base)} ({size})"
+    if bad:
+        drawn += f"; {bad:,} of the entries drawn held no position to start from and were left out"
+    if len(lines) < args.count:   # a book with too few positions: they repeat
+        drawn += f"; it has only {len(lines):,} position{'s' if len(lines) != 1 else ''}, so they repeat"
+        lines += [rng.choice(lines) for _ in range(args.count - len(lines))]
+        rng.shuffle(lines)
     with open(args.out + ".tmp", "w") as f:   # moved into place when complete
         f.writelines(line + "\n" for line in lines)
     os.replace(args.out + ".tmp", args.out)
-    print(f"  {'book':<16}{args.out}: {args.count:,} lines, {n_random:,} random-play positions ({args.plies_min}-{args.plies_max} "
-          f"plies) and {others}")
+    print(f"  {'book':<16}{args.out}: {drawn}")
 
 
 if __name__ == "__main__":

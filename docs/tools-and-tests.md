@@ -7,7 +7,7 @@ trainer also needs numpy and torch (`requirements.txt`).
 | `tools/match.py` | engine against engine under selfmate rules: random, book, or mixed openings played with both colours, fixed nodes, depth, or a time control, concurrency, PGN, a fixed number of games or an SPRT, the result reported as OpenBench reports a test; `--e2 random` plays a random mover |
 | `tools/play.py` | play against the engine in the terminal (SAN or UCI moves, `hint`, `undo`) |
 | `tools/make_puzzles.py`, `tools/puzzles.py` | make selfmate puzzles with an independent python-chess solver, and check that the engine solves them |
-| `tools/gen_book.py` | opening books for datagen: random-play positions, with the start position or positions drawn from another book |
+| `tools/gen_book.py` | a book for datagen: positions drawn at random from another book (FEN or EPD lines, or PGN games, plain or zipped) |
 | `tools/release_net.py` | name a network for publication after its SHA-256, and make it the engine's default |
 | `train/train.py` | the trainer |
 | `train/calibrate.py` | how well a data set's search scores predict its results |
