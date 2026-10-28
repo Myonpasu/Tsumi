@@ -22,10 +22,8 @@ GAMES=${GAMES:-20000}                   # games per generation
 NODES=${NODES:-10000}                   # search nodes per move (each search gets 80-120% of it and finishes its iteration)
 RANDOM_OPENINGS=${RANDOM_OPENINGS:-50}  # this % of the games start from a random-play position: 8-12 random plies, played
 OPENING_MIN_SCORE=${OPENING_MIN_SCORE:-500}    # when a search scores it within these millipawns for either side
-OPENING_MAX_SCORE=${OPENING_MAX_SCORE:-2000}   # (unbalanced, so more often decisive, but not decided; 0: no check).
-                                        #     The other games start from ...
-BOOK=${BOOK:-}                          # ... positions drawn from this book - FEN or EPD lines, or PGN opening lines,
-                                        #     plain or zipped as the Stockfish books come - or else the start position
+OPENING_MAX_SCORE=${OPENING_MAX_SCORE:-2000}   # (unbalanced, so more often decisive, but not decided; 0: no check)
+BOOK=${BOOK:-}                          # the other games start from positions drawn from this book - FEN, EPD, or PGN lines
 RANDOM_MOVE_PCT=${RANDOM_MOVE_PCT:-40}  # a random move on this % of the plies from RANDOM_MOVE_MINPLY to
 RANDOM_MOVE_MINPLY=${RANDOM_MOVE_MINPLY:-0}    # RANDOM_MOVE_MAXPLY - 1 (counted from the opening) ...
 RANDOM_MOVE_MAXPLY=${RANDOM_MOVE_MAXPLY:-20}
