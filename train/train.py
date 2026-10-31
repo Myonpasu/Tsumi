@@ -25,12 +25,13 @@ network is more optimistic than the target (an evaluation too high misleads a se
 output of +1 is a 50% chance of winning, whatever the scale of the search scores the network learnt from; the
 engine multiplies y by SCALE (1000) into its internal units and shows it as +1.00.
 
-Validation.  Whole games holding --val-fraction of the positions are held out (the positions of a game are alike
-and share its result, so a split by position would reward memorising games), and filtered like the training
-positions.  The table's train and val losses are both measured against the target at the final lambda, which
-keeps them comparable from epoch to epoch; "vs score" and "vs result" are the held-out positions against the
-search score and the game result alone.  --keep-best writes the epoch with the lowest val loss rather than the
-last.
+Validation.  Whole games holding about --val-fraction of the positions are held out (the positions of a game are
+alike and share its result, so a split by position would reward memorising games), and filtered like the training
+positions.  A game is held out by a hash of its first position, so it is held out in every run that has it: a
+resumed network never trained on the held-out games, even when the runs' data overlap.  The table's train and val
+losses are both measured against the target at the final lambda, which keeps them comparable from epoch to epoch;
+"vs score" and "vs result" are the held-out positions against the search score and the game result alone.  --keep-best
+writes the epoch with the lowest val loss rather than the last.
 
 --resume continues from a .pt checkpoint (as the pipeline does whenever nets/best.nnue.pt exists).  The learning
 rate is multiplied by --lr-decay every --lr-step epochs.  The .nnue is written with its units reordered for the
@@ -124,20 +125,28 @@ def game_ids(recs):
     return np.cumsum(start, dtype=np.int32) - 1
 
 
-def split_by_game(recs, fraction, rng):
-    """(validation indices, training indices, validation games, games): whole games, drawn at random until they hold
-    `fraction` of the positions, are held out.  Indices (int32) rather than copies: the records are held once."""
+def split_by_game(recs, fraction):
+    """(held-out indices, training indices, games held out, games): whole games are held out, each by a hash of its
+    first position, so a game is held out in every run that has it whatever the rest of the data.  A network trained
+    on some generations then never saw the games held out of a later run on others, and its validation losses
+    there, as a resumed network's, are fair.  About `fraction` of the positions are held out.  Indices (int32)
+    rather than copies: the records are held once."""
     gid = game_ids(recs)
     n_games = int(gid[-1]) + 1 if len(gid) else 0
-    want = int(len(recs) * fraction)
-    order = rng.permutation(n_games)
-    filled = np.cumsum(np.bincount(gid, minlength=n_games)[order])
-    k = min(n_games, int(np.searchsorted(filled, want)) + 1) if want > 0 else 0
-    held = np.zeros(n_games, dtype=bool)
-    held[order[:k]] = True
+    first = recs[np.flatnonzero(np.diff(gid, prepend=-1))]
+    # The position alone: a relabelled game (tsumi rescore) keeps its fate.
+    pcs = np.ascontiguousarray(first["pcs"]).view("<u8")
+    h = np.zeros(n_games, dtype=np.uint64)
+    with np.errstate(over="ignore"):
+        for word in (first["occ"], pcs[:, 0], pcs[:, 1], first["stm"].astype(np.uint64) << 8 | first["ply"]):
+            h = (h ^ word) * np.uint64(0x9E3779B97F4A7C15)   # mixed as splitmix64 mixes
+            h = (h ^ (h >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
+            h = (h ^ (h >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
+            h ^= h >> np.uint64(31)
+    held = h < np.uint64(min(int(fraction * 2.0**64), 2**64 - 1))
     is_val = held[gid]
     all_idx = np.arange(len(recs), dtype=np.int32)
-    return all_idx[is_val], all_idx[~is_val], k, n_games
+    return all_idx[is_val], all_idx[~is_val], int(held.sum()), n_games
 
 
 def has_result(recs):
@@ -249,7 +258,7 @@ def main():
     load_featlib()   # exits with a message if `make featlib` has not been run
 
     data = load_data(args.data, args.max_positions)
-    val_idx, train_idx, val_games, n_games = split_by_game(data, args.val_fraction, rng)
+    val_idx, train_idx, val_games, n_games = split_by_game(data, args.val_fraction)
     # The score model is fitted, and the data described, on a sample of the training positions when there are more
     # than FIT_SAMPLE: the fit needs no more, and a copy of all of them would cost as much memory as the data.
     FIT_SAMPLE = 5_000_000

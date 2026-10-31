@@ -215,7 +215,8 @@ epoch:
 
 `val loss` is measured on whole games held out from training (`--val-fraction`, 2%), and `train loss` on the
 training positions, both against the target at the final λ (a column shows λ when it changes), so they
-compare from epoch to epoch. A widening gap between them is the network memorising its training games.
+compare from epoch to epoch. A game is held out by a hash of its first position, so the same games are held
+out in every run that has them, and a network resumed from an earlier run never trained on them. A widening gap between them is the network memorising its training games.
 `vs score` and `vs result` are the held-out positions against the search score and against the game result
 alone. A run that resumes a checkpoint starts with a row `0/N`, the resumed network's losses on the same
 held-out positions, so the epochs show whether training improved on it, and the `kept` line at the end says
