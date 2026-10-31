@@ -44,8 +44,8 @@ LOSS_ASYMMETRY=${LOSS_ASYMMETRY:-0.2}   # the loss is weighted 1 + this where th
 ANCHOR_P=${ANCHOR_P:-0.01}              # the win probability at an output of 0 on the curve the output goes through
                                         #     (+1.00 is a 50% win on it): smaller is steeper (train/wdl.py)
 KEEP_BEST=${KEEP_BEST:-1}               # 1: each candidate is the epoch with the lowest validation loss; 0: the last
-HISTORY=${HISTORY:-10}                  # train on up to this many generations of data, but only those labelled by the
-                                        #     network that labelled this generation's (0: all of those)
+HISTORY=${HISTORY:-10}                  # train on up to this many generations of data (0: all)
+HISTORY_SAME_NET=${HISTORY_SAME_NET:-0} # 1: only the generations labelled by the network that labelled this one's
 MAX_POSITIONS=${MAX_POSITIONS:-0}       # at most this many positions, the newest generations first (0: no cap)
 PROGRESS_EVERY=${PROGRESS_EVERY:-2000000}   # a row of the training table every this many positions within an epoch
                                         #     (0: only at the end of each epoch)
@@ -125,7 +125,7 @@ regularisers=""
 [[ "$RESULT_FILTER" == 1 ]] && regularisers="results the score model finds unlikely mostly dropped"
 [[ "$LOSS_ASYMMETRY" != 0 ]] && regularisers="${regularisers:+$regularisers, }loss weighted 1 + $LOSS_ASYMMETRY where the network is more optimistic than the target"
 [[ -n "$regularisers" ]] && kv "" "$regularisers"
-kv ""           "history $([[ "$HISTORY" == 0 ]] && echo "all generations labelled by the same network" || echo "up to $HISTORY generations labelled by the same network")$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions"), $([[ "$RESUME" == 1 ]] && echo "warm-started from the best network's checkpoint$([[ -f "$best.pt" ]] || echo " (none yet: from scratch until a candidate is accepted)")" || echo "from scratch")"
+kv ""           "history $([[ "$HISTORY" == 0 ]] && echo "all generations" || echo "up to $HISTORY generations")$([[ "$HISTORY_SAME_NET" == 1 ]] && echo " labelled by the best network")$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions"), $([[ "$RESUME" == 1 ]] && echo "warm-started from the best network's checkpoint$([[ -f "$best.pt" ]] || echo " (none yet: from scratch until a candidate is accepted)")" || echo "from scratch")"
 kv "match"      "$MATCH_GAMES games $([[ -n "$MATCH_TC" ]] && echo "at $MATCH_TC" || echo "at $MATCH_NODES nodes"), $CONCURRENCY at a time; a candidate replaces $best unless it scores below it"
 match_openings="8 random plies from the start position"
 [[ "$OPENING_MAX_SCORE" -gt 0 ]] && match_openings+=", kept when the larger of the two networks' scores lies within $((OPENING_MIN_SCORE / 10))-$((OPENING_MAX_SCORE / 10)) cp"
@@ -273,12 +273,14 @@ for gen in $(seq "$first" "$last"); do
     rule "calibration"
     python3 train/calibrate.py "data/gen$gen/data.bin" --anchor-p "$ANCHOR_P" | tee -i "logs/calibrate_gen$gen.log"
 
-    # Training on this generation's data and up to HISTORY - 1 earlier generations labelled by the same network.
+    # Training on this generation's data and up to HISTORY - 1 earlier generations, whichever best network labelled
+    # them (HISTORY_SAME_NET=1: only this generation's).  A game's positions all carry its result, so a few
+    # generations are learnt game by game, while the scores of a best network a few Elo older are nearly as good.
     datafiles=("data/gen$gen/data.bin")
     this_source=$(cat "data/gen$gen/source")
     for ((prev = gen - 1; prev >= 0 && (HISTORY == 0 || ${#datafiles[@]} < HISTORY); prev--)); do
         [[ -f "data/gen$prev/data.bin" && -f "data/gen$prev/source" ]] || break
-        [[ "$(cat "data/gen$prev/source")" == "$this_source" ]] || break
+        [[ "$HISTORY_SAME_NET" != 1 || "$(cat "data/gen$prev/source")" == "$this_source" ]] || break
         datafiles+=("data/gen$prev/data.bin")
     done
     rule "training"
@@ -287,7 +289,7 @@ for gen in $(seq "$first" "$last"); do
         kv "candidate" "$net exists (its training is complete): not trained again"
     else
         gens=$(printf '%s\n' "${datafiles[@]}" | sed -E 's|^data/gen([0-9]+)/data\.bin$|\1|' | paste -sd, - | sed 's/,/, /g')
-        kv "training on" "generation$([[ ${#datafiles[@]} -gt 1 ]] && echo s) $gens: the data labelled by the best network$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions, newest first")"
+        kv "training on" "generation$([[ ${#datafiles[@]} -gt 1 ]] && echo s) $gens$([[ "$HISTORY_SAME_NET" == 1 ]] && echo ", the data labelled by the best network")$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions, newest first")"
         trainopt=(--lr "$LR_SCRATCH")
         if [[ "$RESUME" == 1 && -f "$best.pt" ]]; then trainopt=(--resume "$best.pt" --lr "$LR"); fi
         if [[ "$KEEP_BEST" == 1 ]]; then trainopt+=(--keep-best); fi

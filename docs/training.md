@@ -26,9 +26,9 @@ Each generation *N*:
 
 1. **Data**: `tsumi datagen` plays `GAMES` games with the best network → `data/genN/data.bin`.
 2. **Calibration**: `train/calibrate.py` reports how well the search scores predict the results.
-3. **Training**: `train/train.py` trains `nets/gen(N+1).nnue` on this generation's data and on earlier
-   generations labelled by the same network (up to `HISTORY` generations). Data labelled by older networks
-   does not help and is left out.
+3. **Training**: `train/train.py` trains `nets/gen(N+1).nnue` on this generation's data and on up to
+   `HISTORY` − 1 earlier generations, whichever best network labelled them ([the trainer](#the-trainer) says
+   why).
 4. **Verification**: `train/verify_net.py` checks the engine against numpy on the new network.
 5. **Match**: `tools/match.py` plays the candidate against the best network. A candidate that scores at least
    even becomes `nets/best.nnue` (with its `.pt`).
@@ -62,7 +62,8 @@ The settings are environment variables:
 | `LOSS_ASYMMETRY` | 0.2 | weight the loss 1 + this where the network is more optimistic than the target |
 | `ANCHOR_P` | 0.01 | the output curve's win probability at 0 (see [output units](#output-units)) |
 | `KEEP_BEST` | 1 | keep the epoch with the lowest validation loss (0: the last) |
-| `HISTORY`, `MAX_POSITIONS` | 10, 0 | at most this many generations of same-network data (0: all), and positions (0: no cap) |
+| `HISTORY`, `MAX_POSITIONS` | 10, 0 | at most this many generations of data (0: all), and positions (0: no cap) |
+| `HISTORY_SAME_NET` | 0 | 1: only the generations labelled by the current best network |
 | `RESUME` | 1 | warm-start from the best network's checkpoint (0: train from scratch) |
 | `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 1000, 50000, | the match: games, and nodes per move or a time control such as `10+0.1` |
 | `MATCH_BOOK`, `MATCH_RANDOM_OPENINGS` | , 50 | the match's openings: random-play positions (8 random plies within the score window), or with a book this % of them random-play and the rest drawn from it |
@@ -163,6 +164,15 @@ maximum: no check).
 python3 train/train.py --data 'data/gen*/data.bin' --out nets/gen1.nnue --resume nets/best.nnue.pt --keep-best
 ```
 
+**Training set.** A game's recorded positions all carry its result, so what the network can learn by heart
+is games rather than positions, and it does: trained on one or two generations (50,000–100,000 games, 7–14
+million positions) it can end with a train loss two to three times below the val loss and lose its match,
+while ten generations (500,000 games) keep the two within a few percent of each other. The pipeline therefore
+trains on the last `HISTORY` generations whichever best network labelled them, since the scores of a network
+a few Elo weaker are nearly as good targets and the results do not depend on it. `HISTORY_SAME_NET=1` keeps
+to the current network's generations, which may suit the first generations of a run from scratch, where
+successive networks differ a lot.
+
 **Target.** Each position is trained towards a blend of its search score and its game result, as expected
 results for the side to move (1 a win, ½ a draw, 0 a loss):
 
@@ -207,8 +217,10 @@ epoch:
 training positions, both against the target at the final λ (a column shows λ when it changes), so they
 compare from epoch to epoch. A widening gap between them is the network memorising its training games.
 `vs score` and `vs result` are the held-out positions against the search score and against the game result
-alone. With `--keep-best` the network written is the epoch with the lowest `val loss`, and a run can be
-stopped with Ctrl-C at any time without losing it.
+alone. A run that resumes a checkpoint starts with a row `0/N`, the resumed network's losses on the same
+held-out positions, so the epochs show whether training improved on it, and the `kept` line at the end says
+so. With `--keep-best` the network written is the epoch with the lowest `val loss`, and a run can be stopped
+with Ctrl-C at any time without losing it.
 
 The trainer writes the network (`OUT.nnue`, with its units reordered for the engine's sparse first layer) and
 its float checkpoint (`OUT.nnue.pt`). Training-only *feature factorisation* lets rare features share weights

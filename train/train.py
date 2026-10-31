@@ -403,6 +403,8 @@ def main():
         if fixed:
             kv("", f"{' / '.join(n for n, _ in fixed)}: the held-out positions against {' / '.join(d for _, d in fixed)} alone")
         kv("", "(losses compare with another run's only on the same data)")
+        if args.resume:
+            kv("", f"the row 0/{args.epochs} is the resumed network before training")
     else:
         kv("columns", f"train loss: against {target_desc} (too few held-out positions for validation losses)")
     print()
@@ -410,6 +412,12 @@ def main():
 
     t_run = time.time()
     total = args.epochs * per_epoch
+
+    def print_row(cells):
+        print(("  " + "  ".join(f"{cells.get(name, ''):>{w}}" for name, w in columns)).rstrip(), flush=True)
+
+    def val_cells(val):
+        return {"val loss": f"{val[0]:.5f}", "vs score": f"{val[1]:.5f}", "vs result": f"{val[2]:.5f}"}
 
     def row(epoch, seen, train_loss, rate, val=None, lam=None, lr=None):
         """A row of the table: a progress row while the epoch runs (no validation losses, lambda or lr), or its last."""
@@ -419,10 +427,15 @@ def main():
                  "pos/s": f"{rate / 1000:.0f}k", "elapsed": fmt_duration(elapsed),
                  "ETA": "-" if done >= total else fmt_duration(elapsed / max(done, 1) * (total - done))}
         if val is not None:
-            cells.update({"val loss": f"{val[0]:.5f}", "vs score": f"{val[1]:.5f}", "vs result": f"{val[2]:.5f}"})
+            cells.update(val_cells(val))
         if lam is not None:
             cells.update({"lambda": f"{lam:.3f}", "lr": f"{lr:.1e}"})
-        print("  " + "  ".join(f"{cells.get(name, ''):>{w}}" for name, w in columns), flush=True)
+        print_row(cells)
+
+    start_val = None   # the resumed network's validation losses, which the epochs are to improve on
+    if args.resume and validating:
+        start_val = validate(val_recs)
+        print_row({"epoch": f"0/{args.epochs}", **val_cells(start_val)})
 
     best_val, written_epoch = float("inf"), 0
     history = {}   # epoch -> its validation losses
@@ -489,6 +502,9 @@ def main():
             kept += ", the lowest - still falling at the end, so more epochs or a slower decay might help"
         else:
             kept += ", the lowest so far"
+        if start_val is not None:
+            better = history[written_epoch][0] < start_val[0]
+            kept += f"{'; the resumed network had' if better else ' - no better than the resumed network at'} {start_val[0]:.5f}"
         kv("kept", kept)
     elif written_epoch:
         kv("kept", f"epoch {written_epoch} of {args.epochs}, the last (too few held-out positions to choose by)")
