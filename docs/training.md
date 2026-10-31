@@ -49,7 +49,7 @@ The settings are environment variables:
 | `GAMES` | 20000 | games per generation |
 | `NODES` | 10000 | search nodes per move in datagen (a soft budget: the search finishes its iteration) |
 | `RANDOM_OPENINGS` | 50 | % of each generation's games that start from a random-play position (8–12 random plies) |
-| `OPENING_MIN_SCORE`, `OPENING_MAX_SCORE` | 500, 2000 | a random-play position is played when a search scores it within these millipawns, for either side (`OPENING_MAX_SCORE=0`: no check) |
+| `OPENING_MIN_SCORE`, `OPENING_MAX_SCORE` | 500, 2000 | a random-play position is played when a search scores it within these millipawns, for either side (`OPENING_MAX_SCORE=0`: no check); the match's random-play openings use the same window |
 | `BOOK` | | the other games start from positions drawn from this book ([opening books](#opening-books)); without one, from the start position |
 | `RANDOM_MOVE_PCT`, `RANDOM_MOVE_MINPLY`, `RANDOM_MOVE_MAXPLY` | 40, 0, 20 | random moves on 40% of plies 0–19 |
 | `RANDOM_MULTI_PV`, `RANDOM_MULTI_PV_DIFF` | 3, 250 | a random move is one of the best 3 within 0.25 pawns of the best |
@@ -65,7 +65,7 @@ The settings are environment variables:
 | `HISTORY`, `MAX_POSITIONS` | 10, 0 | at most this many generations of same-network data (0: all), and positions (0: no cap) |
 | `RESUME` | 1 | warm-start from the best network's checkpoint (0: train from scratch) |
 | `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 1000, 50000, | the match: games, and nodes per move or a time control such as `10+0.1` |
-| `MATCH_BOOK`, `MATCH_RANDOM_SHARE` | , 50 | the match's openings: 8 random plies from the start position each, or with a book this % of them random and the rest drawn from it |
+| `MATCH_BOOK`, `MATCH_RANDOM_OPENINGS` | , 50 | the match's openings: random-play positions (8 random plies within the score window), or with a book this % of them random-play and the rest drawn from it |
 | `CONCURRENCY` | `THREADS` | match games played at once |
 | `DEVICE` | `cuda` if available | the trainer's device |
 | `PROGRESS_EVERY` | 2000000 | a row of the training table every this many positions |
@@ -145,13 +145,17 @@ than the start position but fewer than random-play positions. Stefan Pohl's PGN 
 such as `UHO_XXL_2022_+120_+149.pgn.zip` (226,629 lines of 8 moves after which White stands 1.20–1.49 pawns
 better), work the same way.
 
-The acceptance matches open with 8 random plies from the start position, never with the start position
-itself (a deterministic engine would play the same game over and over).
-`MATCH_BOOK=books/UHO_Lichess_4852_v1.epd.zip` draws half of their openings from a book instead
-(`MATCH_RANDOM_SHARE` sets the other half's share), so that the match also covers the kind of opening the
-engine meets in real games, while the random openings keep the decisive games coming. The match book need
-not be the training book, and a different one tests the candidate on openings its training data never
-started from. `tools/match.py --book FILE --book-share P` does the same manually.
+The acceptance matches open with random-play positions too, 8 random plies from the start position each,
+never the start position itself (a deterministic engine would play the same game over and over). Each is
+searched by both networks as a first move, and played when the larger of their two scores lies within the
+datagen window, 50–200 centipawns by default: one network seeing an edge is enough to keep a position, and
+one seeing the game decided is enough to drop it. `MATCH_BOOK=books/UHO_Lichess_4852_v1.epd.zip` draws half
+of the openings from a book instead (`MATCH_RANDOM_OPENINGS` sets the other half's share), so that the match
+also covers the kind of opening the engine meets in real games, while the random-play openings keep the
+decisive games coming. The match book need not be the training book, and a different one tests the candidate
+on openings its training data never started from. `tools/match.py --book FILE --random-openings P` does the
+same manually, and its `--opening-min-score` and `--opening-max-score` set the window in centipawns (0 as the
+maximum: no check).
 
 ## The trainer
 

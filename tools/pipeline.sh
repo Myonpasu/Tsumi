@@ -55,8 +55,9 @@ RESUME=${RESUME:-1}                     # 1: warm-start each candidate from nets
 MATCH_GAMES=${MATCH_GAMES:-1000}        # games, in pairs of colours from the same opening
 MATCH_NODES=${MATCH_NODES:-50000}       # nodes per move ...
 MATCH_TC=${MATCH_TC:-}                  # ... or a time control such as 10+0.1 instead
-MATCH_BOOK=${MATCH_BOOK:-}              # a book (as BOOK) to draw openings from; without one, every opening is 8
-MATCH_RANDOM_SHARE=${MATCH_RANDOM_SHARE:-50}   # random plies from the start position, with one only this % of them
+MATCH_BOOK=${MATCH_BOOK:-}              # a book (as BOOK) to draw openings from; without one, every opening is a
+                                        #     random-play position: 8 random plies, within datagen's score window
+MATCH_RANDOM_OPENINGS=${MATCH_RANDOM_OPENINGS:-50}   # with a book, this % of the openings are random-play positions
 CONCURRENCY=${CONCURRENCY:-$THREADS}   # games played at once (a game's two engines take turns on one CPU)
 
 first=${1:-0}
@@ -64,10 +65,10 @@ last=${2:-5}
 for v in GAMES NODES; do
     [[ "${!v}" =~ ^[1-9][0-9]*$ ]] || { echo "$v must be a positive number (got '${!v}')" >&2; exit 1; }
 done
-for v in HISTORY MAX_POSITIONS PROGRESS_EVERY RANDOM_OPENINGS OPENING_MIN_SCORE OPENING_MAX_SCORE MATCH_RANDOM_SHARE; do
+for v in HISTORY MAX_POSITIONS PROGRESS_EVERY RANDOM_OPENINGS OPENING_MIN_SCORE OPENING_MAX_SCORE MATCH_RANDOM_OPENINGS; do
     [[ "${!v}" =~ ^[0-9]+$ ]] || { echo "$v must be a number (got '${!v}')" >&2; exit 1; }
 done
-for v in RANDOM_OPENINGS MATCH_RANDOM_SHARE; do
+for v in RANDOM_OPENINGS MATCH_RANDOM_OPENINGS; do
     (( ${!v} <= 100 )) || { echo "$v is a percentage, 0-100 (got ${!v})" >&2; exit 1; }
 done
 for v in BOOK MATCH_BOOK; do
@@ -126,7 +127,10 @@ regularisers=""
 [[ -n "$regularisers" ]] && kv "" "$regularisers"
 kv ""           "history $([[ "$HISTORY" == 0 ]] && echo "all generations labelled by the same network" || echo "up to $HISTORY generations labelled by the same network")$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions"), $([[ "$RESUME" == 1 ]] && echo "warm-started from the best network's checkpoint$([[ -f "$best.pt" ]] || echo " (none yet: from scratch until a candidate is accepted)")" || echo "from scratch")"
 kv "match"      "$MATCH_GAMES games $([[ -n "$MATCH_TC" ]] && echo "at $MATCH_TC" || echo "at $MATCH_NODES nodes"), $CONCURRENCY at a time; a candidate replaces $best unless it scores below it"
-kv ""           "openings: $([[ -n "$MATCH_BOOK" ]] && echo "$((100 - MATCH_RANDOM_SHARE))% drawn from $MATCH_BOOK, $MATCH_RANDOM_SHARE% reached by " || echo "")8 random plies from the start position"
+match_openings="8 random plies from the start position"
+[[ "$OPENING_MAX_SCORE" -gt 0 ]] && match_openings+=", kept when the larger of the two networks' scores lies within $((OPENING_MIN_SCORE / 10))-$((OPENING_MAX_SCORE / 10)) cp"
+[[ -n "$MATCH_BOOK" ]] && match_openings="$((100 - MATCH_RANDOM_OPENINGS))% drawn from $MATCH_BOOK, $MATCH_RANDOM_OPENINGS% reached by $match_openings"
+kv ""           "openings: $match_openings"
 
 # The network that labels a generation's data, by its md5: written to data/genN/source before datagen, and read
 # back to decide which earlier generations may join the training set.
@@ -302,8 +306,9 @@ for gen in $(seq "$first" "$last"); do
     limitopt=(--nodes "$MATCH_NODES")
     if [[ -n "$MATCH_TC" ]]; then limitopt=(--tc "$MATCH_TC"); fi
     python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 "EvalFile=$net" --opt2 "EvalFile=$best" --name1 "gen$((gen+1))" --name2 "best" \
-        --games "$MATCH_GAMES" "${limitopt[@]}" ${MATCH_BOOK:+--book "$MATCH_BOOK" --book-share $((100 - MATCH_RANDOM_SHARE))} --concurrency "$CONCURRENCY" \
-        --pgn "logs/match_gen$gen.pgn" | tee -i "logs/match_gen$gen.log"
+        --games "$MATCH_GAMES" "${limitopt[@]}" ${MATCH_BOOK:+--book "$MATCH_BOOK" --random-openings "$MATCH_RANDOM_OPENINGS"} \
+        --opening-min-score "$((OPENING_MIN_SCORE / 10))" --opening-max-score "$((OPENING_MAX_SCORE / 10))" \
+        --concurrency "$CONCURRENCY" --pgn "logs/match_gen$gen.pgn" | tee -i "logs/match_gen$gen.log"
     match_time=$(( $(date +%s) - phase_start ))
     read -r elo err <<< "$(match_result "$gen")"
     [[ -n "$elo" ]] || { echo "logs/match_gen$gen.log has no result" >&2; exit 1; }

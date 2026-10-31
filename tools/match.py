@@ -2,19 +2,20 @@
 """Engine-vs-engine matches under selfmate rules (the checkmated side wins), with an Elo estimate.
 
 Standard GUIs and match runners score checkmate for the mating side, so this runner is needed to test Tsumi
-builds or networks against each other.  Both engines talk UCI; python-chess keeps the rules.  Openings are random
-legal moves from the start position, positions drawn at random from --book (FEN/EPD lines or PGN games), or a mix
-(--book-share); each is played with both colours, as fishtest plays its books.  The result is reported in the form
-engine tests are usually quoted in: the Elo difference with its 95% confidence interval, the configuration, the
-game counts, and the pentanomial counts of the pairs of games.  With --sprt the match is a sequential probability
-ratio test, which stops as soon as it is decided.
+builds or networks against each other.  Both engines talk UCI; python-chess keeps the rules.  Openings are
+random-play positions (random legal moves from the start position, kept when the engines' scores give one side
+the upper hand without the game being decided), positions drawn at random from --book (FEN/EPD lines or PGN
+games), or a mix (--random-openings); each is played with both colours, as fishtest plays its books.  The result
+is reported in the form engine tests are usually quoted in: the Elo difference with its 95% confidence interval,
+the configuration, the game counts, and the pentanomial counts of the pairs of games.  With --sprt the match is a
+sequential probability ratio test, which stops as soon as it is decided.
 
 Examples:
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 100 --tc 1+0.05 --concurrency 8
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 EvalFile=nets/gen2.nnue --opt2 EvalFile=nets/gen1.nnue --nodes 50000
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 50 --depth 8 --pgn out.pgn
   python3 tools/match.py --e1 ./tsumi --e2 random --games 20 --nodes 5000      # sanity check vs random mover
-  python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 1000 --nodes 50000 --book UHO_Lichess_4852_v1.epd.zip --book-share 50
+  python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 1000 --nodes 50000 --book UHO_Lichess_4852_v1.epd.zip --random-openings 50
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --sprt 0 5 --tc 10+0.1 --hash 64 --concurrency 8   # until decided
 """
 import argparse
@@ -229,16 +230,71 @@ def parse_options(lst):
     return d
 
 
-def random_opening(rng, plies):
+def start_clocks(args):
+    """The two clocks and the increment in ms at the start of a game, or (None, 0) without a time control."""
+    if not args.tc:
+        return None, 0.0
+    base, inc = parse_tc(args.tc)
+    return [base * 1000, base * 1000], inc * 1000
+
+
+def go_arguments(args, clocks, inc_ms):
+    """The arguments of "go" for a move: the clocks under a time control, else the fixed limit."""
+    if clocks:   # at least 1 ms: a clock of 0 would read as no clock at all
+        return f"wtime {max(1, int(clocks[0]))} btime {max(1, int(clocks[1]))} winc {int(inc_ms)} binc {int(inc_ms)}"
+    if args.nodes:
+        return f"nodes {args.nodes}"
+    if args.depth:
+        return f"depth {args.depth}"
+    return f"movetime {args.movetime}"
+
+
+def random_position(rng, plies):
+    """The position after plies uniformly random legal moves from the start position."""
+    board = chess.Board()
+    for _ in range(plies):
+        moves = list(board.legal_moves)
+        if not moves:
+            break
+        board.push(rng.choice(moves))
+    return board
+
+
+def within_window(board, engines, args):
+    """Whether the engines' scores for an opening lie within --opening-min-score and --opening-max-score, each
+    engine searching it as it would its first move of a game.  The score of the larger magnitude counts: one
+    engine seeing an edge keeps the position, one seeing the game as good as decided (a mate score included)
+    drops it.  An engine that reports no score, the random mover, has no say."""
+    if not args.opening_max_score:
+        return True
+    magnitudes = []
+    for engine in engines:
+        engine.new_game()
+        _, score = engine.bestmove(board, go_arguments(args, *start_clocks(args)))
+        if score is not None:
+            magnitudes.append(math.inf if score[0] == "mate" else abs(score[1]))
+    return not magnitudes or args.opening_min_score <= max(magnitudes) <= args.opening_max_score
+
+
+MAX_OPENING_TRIES = 100   # a window no position satisfies would otherwise never let a game start
+
+
+def random_opening(rng, args, engines):
+    """A random-play opening for the pair: --opening-plies random legal plies from the start position, drawn again
+    while the game is over already or the position lies outside the engines' score window.  Returns the position
+    and the number of positions drawn."""
+    tries = 0
     while True:
-        b = chess.Board()
-        for _ in range(plies):
-            moves = list(b.legal_moves)
-            if not moves:
-                break
-            b.push(rng.choice(moves))
-        if result_of(b, 10**9) is None:
-            return b
+        board = random_position(rng, args.opening_plies)
+        if result_of(board, 10**9) is not None:
+            continue
+        tries += 1
+        if within_window(board, engines, args):
+            return board, tries
+        if tries == MAX_OPENING_TRIES:
+            print(f"warning: no random-play position within {args.opening_min_score}-{args.opening_max_score} cp in "
+                  f"{tries} tries, the last one is played", file=sys.stderr, flush=True)
+            return board, tries
 
 
 def play_game(args, e1, e2, opening, swap):
@@ -247,26 +303,14 @@ def play_game(args, e1, e2, opening, swap):
     white, black = (e2, e1) if swap else (e1, e2)
     white.new_game()
     black.new_game()
-    clocks = None
-    inc_ms = 0.0
-    if args.tc:
-        base, inc = parse_tc(args.tc)
-        clocks = [base * 1000, base * 1000]
-        inc_ms = inc * 1000
+    clocks, inc_ms = start_clocks(args)
     game = chess.pgn.Game()
     game.setup(opening)
     node = game
     res = result_of(board, args.max_plies)
     while res is None:
         eng = white if board.turn == chess.WHITE else black
-        if clocks:   # at least 1 ms: a clock of 0 would read as no clock at all
-            go = f"wtime {max(1, int(clocks[0]))} btime {max(1, int(clocks[1]))} winc {int(inc_ms)} binc {int(inc_ms)}"
-        elif args.nodes:
-            go = f"nodes {args.nodes}"
-        elif args.depth:
-            go = f"depth {args.depth}"
-        else:
-            go = f"movetime {args.movetime}"
+        go = go_arguments(args, clocks, inc_ms)
         t0 = time.time()
         mv, score = eng.bestmove(board, go)
         dt = (time.time() - t0) * 1000
@@ -424,11 +468,19 @@ def main():
     ap.add_argument("--nodes", type=int, default=0)
     ap.add_argument("--depth", type=int, default=0)
     ap.add_argument("--movetime", type=int, default=100, help="ms per move when no other limit is given")
-    ap.add_argument("--opening-plies", type=int, default=8, help="random plies from the start position per opening (default 8)")
+    ap.add_argument("--opening-plies", type=int, default=8, help="random plies from the start position per random-play opening "
+                                                                  "(default 8)")
+    ap.add_argument("--opening-min-score", type=int, default=50, metavar="CP",
+                    help="a random-play position is played when the larger of the two engines' scores for it lies within this "
+                         "and --opening-max-score, in centipawns (default 50-200): one engine seeing an edge keeps it, one "
+                         "seeing the game decided drops it")
+    ap.add_argument("--opening-max-score", type=int, default=200, metavar="CP",
+                    help="see --opening-min-score (default 200; 0: every position is played)")
     ap.add_argument("--book", help="a book to draw openings from: FEN or EPD lines, or PGN games played to their end, plain or "
                                    "in a .zip (such as the Stockfish books); each position at most once while the book lasts")
-    ap.add_argument("--book-share", type=int, default=100,
-                    help="percentage of the openings drawn from --book; the rest are --opening-plies random plies (default 100)")
+    ap.add_argument("--random-openings", type=int, metavar="P",
+                    help="with --book, the percentage of the openings that are random-play positions rather than drawn from the "
+                         "book (default 0; without a book every opening is one)")
     ap.add_argument("--max-plies", type=int, default=400)
     ap.add_argument("--concurrency", type=int, default=1)
     ap.add_argument("--seed", type=int, default=0)
@@ -440,8 +492,13 @@ def main():
             parse_tc(args.tc)
         except ValueError:
             ap.error(f"--tc takes base+increment in seconds, e.g. 10+0.1 (got {args.tc!r})")
-    if not 0 <= args.book_share <= 100:
-        ap.error("--book-share is a percentage, 0-100")
+    if args.random_openings is not None and args.book is None:
+        ap.error("--random-openings shares the openings between random-play positions and a --book, which was not given")
+    if not 0 <= (args.random_openings or 0) <= 100:
+        ap.error("--random-openings is a percentage, 0-100")
+    if min(args.opening_min_score, args.opening_max_score) < 0 or 0 < args.opening_max_score < args.opening_min_score:
+        ap.error("--opening-min-score and --opening-max-score are centipawns, the first at most the second (0 as the maximum: "
+                 "no check)")
     if args.sprt and max(abs(x) for x in args.sprt) > 200:   # the estimate breaks down beyond
         ap.error("--sprt takes Elo differences within +-200: an SPRT is for small differences")
     seed = args.seed or time.time_ns()
@@ -473,7 +530,8 @@ def main():
     pairs = (games + 1) // 2
     # A book position is drawn once while the book lasts: a deterministic engine (a fixed node or depth limit) plays
     # the same pair of games from the same opening, which would count twice for one game's worth of information.
-    from_book = [args.book is not None and rng.randrange(100) < args.book_share for _ in range(pairs)]
+    random_pct = 100 if args.book is None else args.random_openings or 0
+    from_book = [rng.randrange(100) >= random_pct for _ in range(pairs)]
     n_book = sum(from_book)
     book_openings, book_size = [], ""
     if n_book and args.book:
@@ -491,14 +549,13 @@ def main():
                   f"position{'s' if len(book) != 1 else ''}: they repeat, and the error bar is too small if the engines "
                   "are deterministic", file=sys.stderr)
     it = iter(book_openings)
-    openings = [next(it) if b else None for b in from_book]   # a random opening is made when its pair is played
-
-    def opening(i):
-        if openings[i] is None:   # from its own generator, so the same for a --seed whatever order the pairs run in
-            openings[i] = random_opening(random.Random(f"{seed}:{i}"), args.opening_plies)
-        return openings[i]
+    openings = [next(it) if b else None for b in from_book]   # a random-play opening is made when its pair is played
+    drawn = {"positions": 0, "played": 0}   # random-play positions drawn, and openings they gave
 
     random_desc = f"{args.opening_plies} random plies from the start position"
+    if args.opening_max_score:
+        random_desc += (f", kept when the larger of the engines' scores lies within "
+                        f"{args.opening_min_score}-{args.opening_max_score} cp")
     if n_book == 0:
         openings_desc = random_desc
     elif n_book == pairs:
@@ -539,6 +596,17 @@ def main():
     decided = threading.Event()       # the SPRT has decided: the pairs not yet started are not played
     live = set()                      # the engines of the pairs in play
 
+    def opening(i, engines):
+        """The pair's opening: its book position, or a random-play one its engines judge, from its own generator so
+        that a --seed draws the same positions whatever order the pairs run in."""
+        if openings[i] is not None:
+            return openings[i]
+        board, tries = random_opening(random.Random(f"{seed}:{i}"), args, engines)
+        with lock:
+            drawn["positions"] += tries
+            drawn["played"] += 1
+        return board
+
     def run_pair(i):
         if interrupted.is_set() or decided.is_set():
             return
@@ -561,9 +629,10 @@ def main():
             engines.append(make_engine(args.e2, o2, i + 1000, shared))
             with lock:
                 live.update(engines)
+            start = opening(i, engines)
             points = 0.0
             for swap in (False, True):
-                res, game = play_game(args, engines[0], engines[1], opening(i), swap)
+                res, game = play_game(args, engines[0], engines[1], start, swap)
                 game.headers["Round"] = str(i + 1)
                 # The result from engine 1's point of view.
                 e1_white = not swap
@@ -627,6 +696,10 @@ def main():
         lines.append("SPRT " + ("passed: the LLR reached the upper bound (H1 accepted)" if ratio >= SPRT_BOUND else
                                 "failed: the LLR reached the lower bound (H0 accepted)" if ratio <= -SPRT_BOUND else
                                 f"undecided: the limit of {total} games was reached (--games)"))
+    if drawn["played"] and args.opening_max_score:
+        lines.append(f"Openings: {drawn['positions']} random-play positions drawn, {drawn['played']} "
+                     f"({drawn['played'] / drawn['positions']:.0%}) within {args.opening_min_score}-{args.opening_max_score} cp "
+                     "and played")
     print("\n" + "\n".join(lines))
     if args.pgn:
         with open(args.pgn, "w") as f:
