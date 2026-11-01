@@ -10,9 +10,9 @@ side to move (1 a win, 0.5 a draw, 0 a loss):
     target = lambda * model(score) + (1 - lambda) * result
 where model is a win/draw/loss model of the search scores fitted to this run's own game results (train/wdl.py),
 so that the two parts agree in expectation.  lambda moves linearly from --lambda at the first epoch to
---end-lambda at the last, towards the results by default: the scores are smooth labels that guide the early
-epochs, and the results, which hold what the shallow searches behind the scores could not see, weigh more at the
-end.  A position without a result label (flags bit 1 in src/datagen.h) uses its score alone.
+--end-lambda at the last, both 0.67 by default.  The scores are smooth labels, and the results hold what the
+shallow searches behind the scores could not see; a lower lambda fits the results better and the scores worse.
+A position without a result label (flags bit 1 in src/datagen.h) uses its score alone.
 
 Result filter.  A position is kept with the probability the score model gives the result its game had (Stockfish's
 wld filter), so a result the score makes unlikely, a won position lost to a later mistake say, mostly drops out
@@ -63,7 +63,7 @@ from ftperm import permute_file
 from model import L2, L3, NNUE, check_checkpoint
 from wdl import ANCHOR_P, anchor_probability, anchored_curve, fit_wdl
 
-LR_RESUME = 1e-5    # default --lr when resuming a checkpoint
+LR_RESUME = 2e-7    # default --lr when resuming a checkpoint
 LR_SCRATCH = 1e-3   # ... and when training from scratch
 
 
@@ -214,15 +214,15 @@ def main():
     ap.add_argument("--out", required=True, help="the network to write (.nnue; the checkpoint goes to OUT.pt)")
     ap.add_argument("--resume", help="continue training from this .pt checkpoint")
     ap.add_argument("--hidden", type=int, default=1024, help="units per perspective, a multiple of 64 (default 1024)")
-    ap.add_argument("--epochs", type=int, default=6, help="epochs to train (default 6)")
+    ap.add_argument("--epochs", type=int, default=5, help="epochs to train (default 5)")
     ap.add_argument("--batch", type=int, default=16384, help="positions per batch (default 16384)")
     ap.add_argument("--lr", type=float, default=None,
                     help=f"learning rate (default {LR_RESUME:g} with --resume, {LR_SCRATCH:g} from scratch)")
     ap.add_argument("--lr-decay", type=float, default=0.5, help="multiply the learning rate by this every --lr-step epochs (default 0.5)")
     ap.add_argument("--lr-step", type=int, default=3, help="epochs between those decays (default 3)")
-    ap.add_argument("--lambda", dest="lam", type=float, default=0.8,
-                    help="weight of the search score against the game result in the target at the first epoch (default 0.8; 1: the score alone)")
-    ap.add_argument("--end-lambda", dest="end_lam", type=float, default=0.5, help="... and at the last epoch (default 0.5)")
+    ap.add_argument("--lambda", dest="lam", type=float, default=0.67,
+                    help="weight of the search score against the game result in the target at the first epoch (default 0.67; 1: the score alone)")
+    ap.add_argument("--end-lambda", dest="end_lam", type=float, default=0.67, help="... and at the last epoch (default 0.67)")
     ap.add_argument("--result-filter", action=argparse.BooleanOptionalAction, default=True,
                     help="keep a position with the probability the score model gives its game's result (default on)")
     ap.add_argument("--loss-asymmetry", type=float, default=0.2,

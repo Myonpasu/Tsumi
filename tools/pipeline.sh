@@ -18,7 +18,7 @@ trap 'echo; echo "interrupted: run the same command again to carry on from here"
 
 # Data generation
 THREADS=${THREADS:-$(nproc)}            # datagen threads
-GAMES=${GAMES:-20000}                   # games per generation
+GAMES=${GAMES:-100000}                  # games per generation
 NODES=${NODES:-10000}                   # search nodes per move (each search gets 80-120% of it and finishes its iteration)
 RANDOM_OPENINGS=${RANDOM_OPENINGS:-50}  # this % of the games start from a random-play position: 8-12 random plies, played
 OPENING_MIN_SCORE=${OPENING_MIN_SCORE:-500}    # when a search scores it within these millipawns for either side
@@ -32,11 +32,11 @@ RANDOM_MULTI_PV_DIFF=${RANDOM_MULTI_PV_DIFF:-250}   # RANDOM_MULTI_PV_DIFF inter
 WRITE_MIN_PLY=${WRITE_MIN_PLY:-5}       # positions before this ply of a game are not recorded
 # Training
 HIDDEN=${HIDDEN:-1024}                  # units per perspective (a multiple of 64; must match the checkpoint resumed)
-EPOCHS=${EPOCHS:-6}                     # epochs per generation; the learning rate halves every 3
-LR=${LR:-1e-5}                          # learning rate when warm-starting from the best network's checkpoint
+EPOCHS=${EPOCHS:-5}                     # epochs per generation; the learning rate halves every 3
+LR=${LR:-2e-7}                          # learning rate when warm-starting from the best network's checkpoint
 LR_SCRATCH=${LR_SCRATCH:-1e-3}          # learning rate when training from scratch (RESUME=0, or no checkpoint)
-LAMBDA=${LAMBDA:-0.8}                   # weight of the search score against the game result in the target at the
-END_LAMBDA=${END_LAMBDA:-0.5}           #     first epoch, and at the last (interpolated linearly)
+LAMBDA=${LAMBDA:-0.67}                  # weight of the search score against the game result in the target at the
+END_LAMBDA=${END_LAMBDA:-0.67}          #     first epoch, and at the last (interpolated linearly)
 RESULT_FILTER=${RESULT_FILTER:-1}       # 1: a position is trained on with the probability the score model gives its
                                         #     result, so results the score makes unlikely mostly drop out; 0: all kept
 LOSS_ASYMMETRY=${LOSS_ASYMMETRY:-0.2}   # the loss is weighted 1 + this where the network is more optimistic than the
@@ -52,7 +52,7 @@ PROGRESS_EVERY=${PROGRESS_EVERY:-2000000}   # a row of the training table every 
 DEVICE=${DEVICE:-}                      # e.g. cuda or cpu (default: cuda if available)
 RESUME=${RESUME:-1}                     # 1: warm-start each candidate from nets/best.nnue.pt; 0: train from scratch
 # Acceptance match
-MATCH_GAMES=${MATCH_GAMES:-1000}        # games, in pairs of colours from the same opening
+MATCH_GAMES=${MATCH_GAMES:-2000}        # games, in pairs of colours from the same opening
 MATCH_NODES=${MATCH_NODES:-50000}       # nodes per move ...
 MATCH_TC=${MATCH_TC:-}                  # ... or a time control such as 10+0.1 instead
 MATCH_BOOK=${MATCH_BOOK:-}              # a book (as BOOK) to draw openings from; without one, every opening is a

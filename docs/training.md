@@ -46,7 +46,7 @@ The settings are environment variables:
 | Variable | Default | |
 |---|---|---|
 | `THREADS` | all cores | datagen threads |
-| `GAMES` | 20000 | games per generation |
+| `GAMES` | 100000 | games per generation |
 | `NODES` | 10000 | search nodes per move in datagen (a soft budget: the search finishes its iteration) |
 | `RANDOM_OPENINGS` | 50 | % of each generation's games that start from a random-play position (8–12 random plies) |
 | `OPENING_MIN_SCORE`, `OPENING_MAX_SCORE` | 500, 2000 | a random-play position is played when a search scores it within these millipawns, for either side (`OPENING_MAX_SCORE=0`: no check); the match's random-play openings use the same window |
@@ -55,9 +55,9 @@ The settings are environment variables:
 | `RANDOM_MULTI_PV`, `RANDOM_MULTI_PV_DIFF` | 3, 250 | a random move is one of the best 3 within 0.25 pawns of the best |
 | `WRITE_MIN_PLY` | 5 | positions before this ply are not recorded |
 | `HIDDEN` | 1024 | network width (units per side), a multiple of 64; must match the checkpoint it warm-starts from |
-| `EPOCHS` | 6 | epochs per generation (the learning rate halves every 3) |
-| `LR`, `LR_SCRATCH` | 1e-5, 1e-3 | learning rate when warm-starting, and from scratch |
-| `LAMBDA`, `END_LAMBDA` | 0.8, 0.5 | weight of the search score against the game result, at the first and last epoch (moved linearly between them) |
+| `EPOCHS` | 5 | epochs per generation (the learning rate halves every 3) |
+| `LR`, `LR_SCRATCH` | 2e-7, 1e-3 | learning rate when warm-starting, and from scratch |
+| `LAMBDA`, `END_LAMBDA` | 0.67, 0.67 | weight of the search score against the game result, at the first and last epoch (moved linearly between them) |
 | `RESULT_FILTER` | 1 | train on a position with the probability the score model gives its game's result (0: on every position) |
 | `LOSS_ASYMMETRY` | 0.2 | weight the loss 1 + this where the network is more optimistic than the target |
 | `ANCHOR_P` | 0.01 | the output curve's win probability at 0 (see [output units](#output-units)) |
@@ -65,13 +65,13 @@ The settings are environment variables:
 | `HISTORY`, `MAX_POSITIONS` | 10, 0 | at most this many generations of data (0: all), and positions (0: no cap) |
 | `HISTORY_SAME_NET` | 0 | 1: only the generations labelled by the current best network |
 | `RESUME` | 1 | warm-start from the best network's checkpoint (0: train from scratch) |
-| `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 1000, 50000, | the match: games, and nodes per move or a time control such as `10+0.1` |
+| `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 2000, 50000, | the match: games, and nodes per move or a time control such as `10+0.1` |
 | `MATCH_BOOK`, `MATCH_RANDOM_OPENINGS` | , 50 | the match's openings: random-play positions (8 random plies within the score window), or with a book this % of them random-play and the rest drawn from it |
 | `CONCURRENCY` | `THREADS` | match games played at once |
 | `DEVICE` | `cuda` if available | the trainer's device |
 | `PROGRESS_EVERY` | 2000000 | a row of the training table every this many positions |
 
-A generation of 20,000 games gives about 2.5 million positions. More games per generation and more nodes per
+A generation of 100,000 games gives about 13 million positions. More games per generation and more nodes per
 move both make better networks. Raise `NODES` when the gains per generation flatten, keeping `MATCH_NODES`
 well above it.
 
@@ -181,9 +181,9 @@ target = λ · model(score) + (1 − λ) · result
 ```
 
 `model` is a win/draw/loss model of the search scores fitted to the run's own data (`train/wdl.py`), so that
-the two parts agree on average. λ moves linearly from `--lambda` (0.8) at the first epoch to `--end-lambda`
-(0.5) at the last. The scores are smooth labels that guide the early epochs, and the results, which hold
-what the shallow searches behind the scores could not see, weigh more at the end.
+the two parts agree on average. λ moves linearly from `--lambda` at the first epoch to `--end-lambda` at
+the last (the pipeline's `LAMBDA` and `END_LAMBDA`), both 0.67 by default. The scores are smooth labels, and
+the results hold what the shallow searches behind the scores could not see.
 
 **Result filter.** A position is trained on with the probability the fitted model gives the result its game
 had, so a result the score makes unlikely, a won position lost to a later mistake,
@@ -274,7 +274,7 @@ engines' threads and hash (`--threads` and `--hash` set both engines, an engine'
 1's / engine 2's are shown where they differ), and `Penta` counts the pairs of games by outcome, LL, LD, DD or
 WL, WD, WW. Selfmate has a strong first-move advantage, which the two games of a pair largely cancel, so the
 statistics are computed over the pairs (the pentanomial model of fishtest and OpenBench). Most games between
-equal networks are draws, and 1000 games give about ±10 Elo.
+equal networks are draws, and the pipeline's 2000 games at 50,000 nodes per move give about ±6 Elo.
 
 With `--sprt ELO0 ELO1` the match is a sequential probability ratio test between the two Elo differences
 (normalized Elo, as on fishtest and OpenBench). It stops as soon as the log-likelihood ratio reaches a bound,
