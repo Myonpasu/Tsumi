@@ -220,8 +220,10 @@ out in every run that has them, and a network resumed from an earlier run never 
 `vs score` and `vs result` are the held-out positions against the search score and against the game result
 alone. A run that resumes a checkpoint starts with a row `0/N`, the resumed network's losses on the same
 held-out positions, so the epochs show whether training improved on it, and the `kept` line at the end says
-so. With `--keep-best` the network written is the epoch with the lowest `val loss`, and a run can be stopped
-with Ctrl-C at any time without losing it.
+so. `--epochs 0` prints that row alone and writes nothing (it takes no `--out`), which checks a network on
+the held-out games of any data, and two networks checked on the same data compare. With `--keep-best` the
+network written is the epoch with the lowest `val loss`, and a run can be stopped with Ctrl-C at any time
+without losing it.
 
 The trainer writes the network (`OUT.nnue`, with its units reordered for the engine's sparse first layer) and
 its float checkpoint (`OUT.nnue.pt`). Training-only *feature factorisation* lets rare features share weights
@@ -252,6 +254,7 @@ Then make the new network `nets/best.nnue` (with its `.pt`) and run the loop wit
 ```bash
 python3 train/verify_net.py --net nets/gen1.nnue --data data/gen0/data.bin      # the engine against numpy
 ./tsumi "setoption name EvalFile value nets/gen1.nnue" "nnuetest 20000"         # incremental vs full accumulator updates
+python3 train/train.py --data data/gen0/data.bin --resume nets/gen1.nnue.pt --epochs 0  # its held-out losses, nothing written
 python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 EvalFile=nets/gen1.nnue --opt2 EvalFile=nets/best.nnue \
     --games 1000 --nodes 50000 --concurrency 16
 python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 EvalFile=nets/gen1.nnue --opt2 EvalFile=nets/best.nnue \

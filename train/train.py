@@ -33,9 +33,11 @@ losses are both measured against the target at the final lambda, which keeps the
 "vs score" and "vs result" are the held-out positions against the search score and the game result alone.  --keep-best
 writes the epoch with the lowest val loss rather than the last.
 
---resume continues from a .pt checkpoint (as the pipeline does whenever nets/best.nnue.pt exists).  The learning
-rate is multiplied by --lr-decay every --lr-step epochs.  The .nnue is written with its units reordered for the
-engine's sparse first layer (train/ftperm.py: the same evaluations, faster); the .pt keeps the trained order.
+--resume continues from a .pt checkpoint (as the pipeline does whenever nets/best.nnue.pt exists), and the table
+then starts with the resumed network's own losses.  --epochs 0 stops there: it checks the network of --resume on
+the held-out positions of the --data and writes nothing.  The learning rate is multiplied by --lr-decay every
+--lr-step epochs.  The .nnue is written with its units reordered for the engine's sparse first layer
+(train/ftperm.py: the same evaluations, faster); the .pt keeps the trained order.
 """
 import argparse
 import glob
@@ -211,10 +213,12 @@ def batch_iter(data, train_idx, batch_size, lam, shown_lam, model, stats, rng, p
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data", nargs="+", required=True, help="data files or globs written by tsumi datagen")
-    ap.add_argument("--out", required=True, help="the network to write (.nnue; the checkpoint goes to OUT.pt)")
+    ap.add_argument("--out", help="the network to write (.nnue; the checkpoint goes to OUT.pt); not with --epochs 0")
     ap.add_argument("--resume", help="continue training from this .pt checkpoint")
     ap.add_argument("--hidden", type=int, default=1024, help="units per perspective, a multiple of 64 (default 1024)")
-    ap.add_argument("--epochs", type=int, default=5, help="epochs to train (default 5)")
+    ap.add_argument("--epochs", type=int, default=5,
+                    help="epochs to train (default 5); 0: no training, the losses of the network of --resume on the held-out "
+                         "positions, and nothing written")
     ap.add_argument("--batch", type=int, default=16384, help="positions per batch (default 16384)")
     ap.add_argument("--lr", type=float, default=None,
                     help=f"learning rate (default {LR_RESUME:g} with --resume, {LR_SCRATCH:g} from scratch)")
@@ -240,6 +244,13 @@ def main():
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--threads", type=int, default=0, help="torch CPU threads (0 = torch's default)")
     args = ap.parse_args()
+    checking = args.epochs == 0   # the losses of the network of --resume, and no training
+    if checking and not args.resume:
+        sys.exit("--epochs 0 checks the network of --resume, which was not given")
+    if checking == bool(args.out):
+        sys.exit("--epochs 0 checks a network and writes nothing: no --out" if checking else "--out is needed to train")
+    if checking:
+        args.lam = args.end_lam   # a check measures at --end-lambda alone
     if args.lr is None:
         args.lr = LR_RESUME if args.resume else LR_SCRATCH
     if args.progress_every < 0 or args.epochs < 0 or args.batch <= 0 or args.lr_step <= 0:
@@ -268,8 +279,12 @@ def main():
     del fit_idx
     labelled = has_result(sample)
     res = sample["result"][labelled]
-    kv("split", f"{len(train_idx):,} positions to train on, {len(val_idx):,} to validate on ({val_games:,} of the "
-                f"{n_games:,} games, held out whole)")
+    if checking:
+        kv("split", f"{len(val_idx):,} held-out positions to check on ({val_games:,} of the {n_games:,} games, the ones any "
+                    "training on this data holds out)")
+    else:
+        kv("split", f"{len(train_idx):,} positions to train on, {len(val_idx):,} to validate on ({val_games:,} of the "
+                    f"{n_games:,} games, held out whole)")
     kv("results", f"white {np.mean(res == 1):.1%}, black {np.mean(res == -1):.1%}, draw {np.mean(res == 0):.1%} of the "
                   f"training positions{sampled}")
     if not labelled.all():
@@ -282,7 +297,7 @@ def main():
         if why:
             sys.exit(f"cannot resume {args.resume}: {why}")
         model.load_state_dict(state)
-        kv("start", f"resumed from {args.resume}")
+        kv("checking" if checking else "start", args.resume if checking else f"resumed from {args.resume}")
     else:
         kv("start", "from scratch (random initialisation)")
     kv("network", f"{args.hidden} units per perspective -> {args.hidden + HEAD_EXTRAS} (pairwise products + legal-move inputs) "
@@ -317,17 +332,20 @@ def main():
     curve = anchored_curve(args.anchor_p)
     w0, d0, _ = (float(v) for v in curve.wdl_np(0.0))
     kv("output units", f"anchored (p = {args.anchor_p:.4g}): an output of +1.00 is a 50% win, 0 a {w0:.0%} win and {d0:.0%} draw")
-    schedule = f"x{args.lr_decay:g} every {args.lr_step} epochs" if args.lr_decay != 1.0 else "constant"
-    kv("learning rate", f"{args.lr:.1e}, {schedule}")
     n_batches = len(train_idx) // args.batch
     per_epoch = n_batches * args.batch   # positions trained on per epoch: the last, partial batch is left out
-    if args.epochs > 0 and n_batches == 0:
-        sys.exit(f"fewer training positions ({len(train_idx):,}) than one batch ({args.batch:,}): lower --batch")
-    kv("run", f"{args.epochs} epoch{'s' if args.epochs != 1 else ''}, batch {args.batch:,}, {device}"
-       + (f", {args.threads} thread{'s' if args.threads != 1 else ''}" if args.threads else "")
-       + (f"; a row every {args.progress_every:,} positions" if args.progress_every and args.epochs else ""))
+    threads = f", {args.threads} thread{'s' if args.threads != 1 else ''}" if args.threads else ""
+    if checking:
+        kv("run", f"no training (--epochs 0), {device}{threads}")
+    else:
+        if n_batches == 0:
+            sys.exit(f"fewer training positions ({len(train_idx):,}) than one batch ({args.batch:,}): lower --batch")
+        schedule = f"x{args.lr_decay:g} every {args.lr_step} epochs" if args.lr_decay != 1.0 else "constant"
+        kv("learning rate", f"{args.lr:.1e}, {schedule}")
+        kv("run", f"{args.epochs} epoch{'s' if args.epochs != 1 else ''}, batch {args.batch:,}, {device}{threads}"
+           + (f"; a row every {args.progress_every:,} positions" if args.progress_every else ""))
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
-    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     stats = {"truncated": 0}
 
     def to_device(arrays, non_blocking=False):
@@ -363,7 +381,8 @@ def main():
         return sums / np.maximum(counts, 1)
 
     # The units are reordered for the engine's sparse first layer on a fixed sample of the training positions.
-    perm_recs = data[np.sort(np.random.default_rng(args.seed + 1).choice(train_idx, min(len(train_idx), FTPERM_POSITIONS), replace=False))]
+    perm_recs = None if checking else data[np.sort(np.random.default_rng(args.seed + 1).choice(
+        train_idx, min(len(train_idx), FTPERM_POSITIONS), replace=False))]
     perm_rates = None
 
     def write_net():
@@ -374,6 +393,7 @@ def main():
         os.replace(args.out + ".pt.tmp", args.out + ".pt")
         model.export(args.out + ".tmp")
         os.replace(args.out + ".tmp", args.out)
+        assert perm_recs is not None
         perm_rates = permute_file(args.out, perm_recs, device=device)   # writes a .tmp and replaces too
 
     def report_written(note=""):
@@ -382,37 +402,38 @@ def main():
             kv("unit order", f"reordered for the engine's sparse first layer (same evaluations): {perm_rates[0]:.1%} -> "
                              f"{perm_rates[1]:.1%} of the input chunks all zero")
 
-    if args.epochs == 0:   # no training: write the network of the checkpoint (or of the random initialisation)
-        write_net()
-        report_written(" (--epochs 0: no training)")
-        return
-
     # The table: a row every --progress-every positions while an epoch runs, and one at its end with the validation
     # losses.  Columns that would only repeat another are left out: vs score at a final lambda of 1 (it is the val
     # loss), vs result at 0, and lambda when it does not change.
     validating = len(val_recs) >= 64
-    columns = [("epoch", len(f"{args.epochs}/{args.epochs}")), ("done", 4), ("train loss", 10)]
+    if checking and not validating:
+        sys.exit(f"{len(val_recs)} held-out positions: too few to check the network on (raise --val-fraction)")
+    columns = [("epoch", len(f"{args.epochs}/{args.epochs}"))]
+    if not checking:
+        columns += [("done", 4), ("train loss", 10)]
     if validating:
         columns.append(("val loss", 8))
         if final_lam != 1.0:
             columns.append(("vs score", 8))
         if final_lam != 0.0:
             columns.append(("vs result", 9))
-    if args.lam != args.end_lam:
-        columns.append(("lambda", 6))
-    columns += [("lr", 7), ("pos/s", 5), ("elapsed", 7), ("ETA", 6)]
+    if not checking:
+        if args.lam != args.end_lam:
+            columns.append(("lambda", 6))
+        columns += [("lr", 7), ("pos/s", 5), ("elapsed", 7), ("ETA", 6)]
     columns = [(name, max(w, len(name))) for name, w in columns]
     names = [c for c, _ in columns]
     print()
     target_desc = {1.0: "the search score alone (lambda 1)", 0.0: "the game result alone (lambda 0)"}.get(
         final_lam, f"the target at the final lambda, {final_lam:.3f}" if args.lam != args.end_lam else f"the target (lambda {final_lam:.3f})")
     if validating:
-        kv("columns", f"train loss, val loss: the training and the held-out positions against {target_desc}")
+        kv("columns", f"{'val loss: the' if checking else 'train loss, val loss: the training and the'} held-out positions "
+                      f"against {target_desc}")
         fixed = [(n, d) for n, d in (("vs score", "the search score"), ("vs result", "the game result")) if n in names]
         if fixed:
             kv("", f"{' / '.join(n for n, _ in fixed)}: the held-out positions against {' / '.join(d for _, d in fixed)} alone")
         kv("", "(losses compare with another run's only on the same data)")
-        if args.resume:
+        if args.resume and not checking:
             kv("", f"the row 0/{args.epochs} is the resumed network before training")
     else:
         kv("columns", f"train loss: against {target_desc} (too few held-out positions for validation losses)")
@@ -445,6 +466,8 @@ def main():
     if args.resume and validating:
         start_val = validate(val_recs)
         print_row({"epoch": f"0/{args.epochs}", **val_cells(start_val)})
+    if checking:
+        return
 
     best_val, written_epoch = float("inf"), 0
     history = {}   # epoch -> its validation losses
