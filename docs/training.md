@@ -31,15 +31,17 @@ Each generation *N*:
    why).
 4. **Verification**: `train/verify_net.py` checks the engine against numpy on the new network.
 5. **Match**: `tools/match.py` plays the candidate against the best network. A candidate that scores at least
-   even becomes `nets/best.nnue` (with its `.pt`).
+   even becomes `nets/best.nnue` (with its `.pt`). One whose validation loss is no lower than the best
+   network's on the same held-out games (the trainer's epoch `0` row) is rejected without a match.
 
 The loop can be interrupted with Ctrl-C and run again with the same arguments at any time. Completed
 generations and phases are skipped, an interrupted datagen carries on from the games it has, and an
 interrupted training or match starts again. Deleting a phase's product redoes it on the next run: delete
 `nets/gen(N+1).nnue` to train generation *N*'s candidate again (and play its match), or `logs/match_genN.log`
-to play the match again. If the deleted candidate had been accepted, the loop stops and says which network
-to put back as the best first. Logs go to `logs/` (`datagen_genN.log`, `calibrate_genN.log`,
-`train_genN.log`, and `match_genN.log` and its PGN), and every generation ends with a summary.
+to play the match again (with `REQUIRE_VAL_GAIN=0` for one the validation check skipped). If the deleted
+candidate had been accepted, the loop stops and says which network to put back as the best first. Logs go to
+`logs/` (`datagen_genN.log`, `calibrate_genN.log`, `train_genN.log`, and `match_genN.log` and its PGN), and
+every generation ends with a summary.
 
 The settings are environment variables:
 
@@ -65,6 +67,7 @@ The settings are environment variables:
 | `HISTORY`, `MAX_POSITIONS` | 10, 0 | at most this many generations of data (0: all), and positions (0: no cap) |
 | `HISTORY_SAME_NET` | 0 | 1: only the generations labelled by the current best network |
 | `RESUME` | 1 | warm-start from the best network's checkpoint (0: train from scratch) |
+| `REQUIRE_VAL_GAIN` | 1 | reject a candidate without a match when its validation loss is no lower than the best network's (0: always play the match) |
 | `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 2000, 50000, | the match: games, and nodes per move or a time control such as `10+0.1` |
 | `MATCH_BOOK`, `MATCH_RANDOM_OPENINGS` | , 50 | the match's openings: random-play positions (8 random plies within the score window), or with a book this % of them random-play and the rest drawn from it |
 | `CONCURRENCY` | `THREADS` | match games played at once |

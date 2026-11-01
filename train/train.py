@@ -530,13 +530,15 @@ def main():
             kept += ", the last epoch's (--keep-best keeps the lowest)"
         elif written_epoch != last:
             kept += f", the lowest (epoch {last}: {history[last][0]:.5f})"
-        elif not interrupted:
-            kept += ", the lowest - still falling at the end, so more epochs or a slower decay might help"
-        else:
+        elif interrupted:
             kept += ", the lowest so far"
-        if start_val is not None:
-            better = history[written_epoch][0] < start_val[0]
-            kept += f"{'; the resumed network had' if better else ' - no better than the resumed network at'} {start_val[0]:.5f}"
+        elif len(history) > 1:
+            kept += ", the lowest - still falling at the end, so more epochs or a slower decay might help"
+        if start_val is not None:   # the pipeline reads this comparison, made at full precision
+            change = history[written_epoch][0] / start_val[0] - 1
+            pct = "less than 0.001%" if abs(change) < 1e-5 else f"{abs(change) * 100:.2g}%"
+            kept += (f"; {pct} below the resumed network's {start_val[0]:.5f}" if change < 0 else
+                     f"; no lower than the resumed network's {start_val[0]:.5f} ({pct} above)")
         kv("kept", kept)
     elif written_epoch:
         kv("kept", f"epoch {written_epoch} of {args.epochs}, the last (too few held-out positions to choose by)")

@@ -6,9 +6,10 @@
 # It starts from nets/best.nnue, with its checkpoint nets/best.nnue.pt beside it to warm-start from.  Each
 # generation N: datagen with the best network -> data/genN, calibration, training -> nets/gen(N+1).nnue, a check
 # of the candidate against numpy, and a match against the best network, which the candidate replaces unless it
-# scores below it.  Safe to interrupt and run again with the same arguments: completed generations and phases are
-# skipped (an interrupted datagen carries on from the games it had; an interrupted training or match starts
-# again).  Set the variables below in the environment to change them, e.g.
+# scores below it.  A candidate whose validation loss is no lower than the best network's on the same held-out
+# games is rejected without a match.  Safe to interrupt and run again with the same arguments: completed
+# generations and phases are skipped (an interrupted datagen carries on from the games it had; an interrupted
+# training or match starts again).  Set the variables below in the environment to change them, e.g.
 #   THREADS=16 GAMES=50000 tools/pipeline.sh 0 9999
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -52,6 +53,7 @@ PROGRESS_EVERY=${PROGRESS_EVERY:-2000000}   # a row of the training table every 
 DEVICE=${DEVICE:-}                      # e.g. cuda or cpu (default: cuda if available)
 RESUME=${RESUME:-1}                     # 1: warm-start each candidate from nets/best.nnue.pt; 0: train from scratch
 # Acceptance match
+REQUIRE_VAL_GAIN=${REQUIRE_VAL_GAIN:-1} # 1: skip candidates with higher validation loss than best network; 0: always play match
 MATCH_GAMES=${MATCH_GAMES:-2000}        # games, in pairs of colours from the same opening
 MATCH_NODES=${MATCH_NODES:-50000}       # nodes per move ...
 MATCH_TC=${MATCH_TC:-}                  # ... or a time control such as 10+0.1 instead
@@ -131,6 +133,7 @@ match_openings="8 random plies from the start position"
 [[ "$OPENING_MAX_SCORE" -gt 0 ]] && match_openings+=", kept when the larger of the two networks' scores lies within $((OPENING_MIN_SCORE / 10))-$((OPENING_MAX_SCORE / 10)) cp"
 [[ -n "$MATCH_BOOK" ]] && match_openings="$((100 - MATCH_RANDOM_OPENINGS))% drawn from $MATCH_BOOK, $MATCH_RANDOM_OPENINGS% reached by $match_openings"
 kv ""           "openings: $match_openings"
+[[ "$REQUIRE_VAL_GAIN" == 1 ]] && kv "" "played only when the candidate's validation loss is lower than the best network's"
 
 # The network that labels a generation's data, by its md5: written to data/genN/source before datagen, and read
 # back to decide which earlier generations may join the training set.
@@ -139,24 +142,32 @@ source_id() { md5sum "$best" | cut -d' ' -f1; }
 # A generation's results from its logs - data, the candidate's validation loss, the match - with the time of each
 # phase when given (gen [data_time train_time match_time]).  Missing logs show as "?".
 gen_summary() {
-    local g=$1 dt=${2:-} tt=${3:-} mt=${4:-} npos games_line val final
+    local g=$1 dt=${2:-} tt=${3:-} mt=${4:-} npos games_line val vs_best final
     npos=$(grep -E '^  positions ' "logs/datagen_gen$g.log" 2>/dev/null | tail -n 1 | awk '{print $2}' || true)
     games_line=$(grep -E '^  done ' "logs/datagen_gen$g.log" 2>/dev/null | tail -n 1 | sed 's/^  done *//; s/, [0-9.]* plies per game//' || true)
     val=$(grep -E '^  kept +epoch [0-9]+ of [0-9]+: val loss [0-9.]+' "logs/train_gen$g.log" 2>/dev/null | tail -n 1 \
           | sed -E 's/^  kept +(epoch [0-9]+ of [0-9]+): (val loss [0-9.]+).*/\2 (\1)/' || true)
+    vs_best=$(grep -E '^  kept ' "logs/train_gen$g.log" 2>/dev/null | tail -n 1 \
+              | sed -nE "s/.*; (.*% below) the resumed network's ([0-9.]+).*/\1 the best network's \2/p
+                         s/.*; no lower than the resumed network's ([0-9.]+) \((.*% above)\).*/no lower than the best network's \1 (\2)/p" || true)
     final=$(awk '/^Games +\|/ {games=$0; sub(/^Games +\| /, "", games)} /^Elo +\|/ {elo=$0; sub(/^Elo +\| /, "", elo)}
-                 END {if (elo != "") print games ", Elo " elo}' "logs/match_gen$g.log" 2>/dev/null || true)
+                 /^not played: / {skip=$0; sub(/^not played: /, "not played, ", skip); sub(/ \(logs\/.*\)$/, "", skip)}
+                 END {if (elo != "") print games ", Elo " elo; else if (skip != "") print skip}' "logs/match_gen$g.log" 2>/dev/null || true)
     kv "data"     "${npos:-?} positions in data/gen$g/data.bin from ${games_line:-? games}${dt:+  ($(fmt_dur "$dt"))}"
-    kv "training" "nets/gen$((g+1)).nnue: ${val:-?}${tt:+  ($(fmt_dur "$tt"))}"
+    kv "training" "nets/gen$((g+1)).nnue: ${val:-?}${vs_best:+, $vs_best}${tt:+  ($(fmt_dur "$tt"))}"
     kv "match"    "gen$((g+1)) vs best: ${final:-?}${mt:+  ($(fmt_dur "$mt"))}"
 }
 # The phases of a generation that are complete are marked by files written when they end: data/genN/done,
-# logs/train_genN.done and logs/decision_genN, the last holding the decision ("accepted" or "rejected", the Elo and
-# its error), written once the best network has been replaced if the candidate was accepted.  A match in progress
-# is marked by logs/match_genN.running.  Deleting a phase's product redoes it on the next run: the candidate
-# (nets/genN+1.nnue) for the training and the match, the match log for the match alone.
+# logs/train_genN.done and logs/decision_genN, the last holding the decision ("accepted" or "rejected", with the Elo
+# and its error when the match was played), written once the best network has been replaced if the candidate was
+# accepted.  A match not played (REQUIRE_VAL_GAIN) leaves a match log saying so, and one in progress is marked by
+# logs/match_genN.running.  Deleting a phase's product redoes it on the next run: the candidate (nets/genN+1.nnue)
+# for the training and the match, the match log for the match alone.
 decision_file() { echo "logs/decision_gen$1"; }
 match_result() { grep -E '^Elo +\| ' "logs/match_gen$1.log" 2>/dev/null | tail -n 1 | awk '{print $3, $5}' || true; }
+# Whether the candidate of generation N failed to lower the validation loss of the network it resumed from, as the
+# trainer's "kept" line says (it compares them at full precision); a candidate trained from scratch has no such line.
+no_val_gain() { grep -qE "^  kept .*no (lower|better) than the resumed network" "logs/train_gen$1.log" 2>/dev/null; }
 verdict() { awk "BEGIN{exit !($1 >= 0)}" && echo accepted || echo rejected; }
 # The candidate of generation N replaces the best network: the network first and its checkpoint second, each copied
 # beside its target and moved into place, so that no file is ever half-written and a run interrupted in between
@@ -304,27 +315,35 @@ for gen in $(seq "$first" "$last"); do
 
     rule "match"
     phase_start=$(date +%s)
-    touch "logs/match_gen$gen.running"
-    limitopt=(--nodes "$MATCH_NODES")
-    if [[ -n "$MATCH_TC" ]]; then limitopt=(--tc "$MATCH_TC"); fi
-    python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 "EvalFile=$net" --opt2 "EvalFile=$best" --name1 "gen$((gen+1))" --name2 "best" \
-        --games "$MATCH_GAMES" "${limitopt[@]}" ${MATCH_BOOK:+--book "$MATCH_BOOK" --random-openings "$MATCH_RANDOM_OPENINGS"} \
-        --opening-min-score "$((OPENING_MIN_SCORE / 10))" --opening-max-score "$((OPENING_MAX_SCORE / 10))" \
-        --concurrency "$CONCURRENCY" --pgn "logs/match_gen$gen.pgn" | tee -i "logs/match_gen$gen.log"
+    elo="" err=""
+    if [[ "$REQUIRE_VAL_GAIN" == 1 ]] && no_val_gain "$gen"; then
+        { echo "match: gen$((gen+1)) vs best"
+          echo "not played: the candidate's validation loss is no lower than the best network's (logs/train_gen$gen.log)"
+        } | tee "logs/match_gen$gen.log"
+        rm -f "logs/match_gen$gen.pgn"
+    else
+        touch "logs/match_gen$gen.running"
+        limitopt=(--nodes "$MATCH_NODES")
+        if [[ -n "$MATCH_TC" ]]; then limitopt=(--tc "$MATCH_TC"); fi
+        python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 "EvalFile=$net" --opt2 "EvalFile=$best" --name1 "gen$((gen+1))" --name2 "best" \
+            --games "$MATCH_GAMES" "${limitopt[@]}" ${MATCH_BOOK:+--book "$MATCH_BOOK" --random-openings "$MATCH_RANDOM_OPENINGS"} \
+            --opening-min-score "$((OPENING_MIN_SCORE / 10))" --opening-max-score "$((OPENING_MAX_SCORE / 10))" \
+            --concurrency "$CONCURRENCY" --pgn "logs/match_gen$gen.pgn" | tee -i "logs/match_gen$gen.log"
+        read -r elo err <<< "$(match_result "$gen")"
+        [[ -n "$elo" ]] || { echo "logs/match_gen$gen.log has no result" >&2; exit 1; }
+    fi
     match_time=$(( $(date +%s) - phase_start ))
-    read -r elo err <<< "$(match_result "$gen")"
-    [[ -n "$elo" ]] || { echo "logs/match_gen$gen.log has no result" >&2; exit 1; }
 
     echo
     rule "generation $gen: summary"
     gen_summary "$gen" "$data_time" "$train_time" "$match_time"
-    if [[ "$(verdict "$elo")" == accepted ]]; then
+    if [[ -n "$elo" && "$(verdict "$elo")" == accepted ]]; then
         promote "$gen"
         kv "decision" "ACCEPTED: $net is the new $best"
     else
         kv "decision" "REJECTED: $best stays"
     fi
-    echo "$(verdict "$elo") $elo $err" > "$decision"
+    if [[ -n "$elo" ]]; then echo "$(verdict "$elo") $elo $err" > "$decision"; else echo rejected > "$decision"; fi
     rm -f "logs/match_gen$gen.running"
     kv "time"     "$(elapsed "$gen_start") for this generation"
 done
