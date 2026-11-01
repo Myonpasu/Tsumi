@@ -30,9 +30,11 @@ Each generation *N*:
    `HISTORY` − 1 earlier generations, whichever best network labelled them ([the trainer](#the-trainer) says
    why).
 4. **Verification**: `train/verify_net.py` checks the engine against numpy on the new network.
-5. **Match**: `tools/match.py` plays the candidate against the best network. A candidate that scores at least
-   even becomes `nets/best.nnue` (with its `.pt`). One whose validation loss is no lower than the best
-   network's on the same held-out games (the trainer's epoch `0` row) is rejected without a match.
+5. **Match**: `tools/match.py` plays the candidate against the best network in an SPRT of up to 5000 games
+   ([below](#checking-a-network)). A candidate that passes becomes `nets/best.nnue` (with its `.pt`), and so
+   does one whose SPRT reaches the game limit undecided with an Elo above 0. One whose validation loss is no
+   lower than the best network's on the same held-out games (the trainer's epoch `0` row) is rejected without
+   a match.
 
 The loop can be interrupted with Ctrl-C and run again with the same arguments at any time. Completed
 generations and phases are skipped, an interrupted datagen carries on from the games it has, and an
@@ -68,7 +70,8 @@ The settings are environment variables:
 | `HISTORY_SAME_NET` | 0 | 1: only the generations labelled by the current best network |
 | `RESUME` | 1 | warm-start from the best network's checkpoint (0: train from scratch) |
 | `REQUIRE_VAL_GAIN` | 1 | reject a candidate without a match when its validation loss is no lower than the best network's (0: always play the match) |
-| `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 2000, 50000, | the match: games, and nodes per move or a time control such as `10+0.1` |
+| `MATCH_SPRT` | `0 10` | the match is an SPRT between these Elo differences (normalized Elo), which the candidate must pass; empty: a fixed match of `MATCH_GAMES` games, won by an Elo above 0 |
+| `MATCH_GAMES`, `MATCH_NODES`, `MATCH_TC` | 5000, 50000, | the match: games (the most an SPRT plays, after which an Elo above 0 decides), and nodes per move or a time control such as `10+0.1` |
 | `MATCH_BOOK`, `MATCH_RANDOM_OPENINGS` | , 50 | the match's openings: random-play positions (8 random plies within the score window), or with a book this % of them random-play and the rest drawn from it |
 | `CONCURRENCY` | `THREADS` | match games played at once |
 | `DEVICE` | `cuda` if available | the trainer's device |
@@ -281,15 +284,18 @@ engines' threads and hash (`--threads` and `--hash` set both engines, an engine'
 WL, WD, WW. Selfmate has a strong first-move advantage, which the two games of a pair largely cancel, so the
 statistics are computed over the pairs (the pentanomial model of fishtest and OpenBench). The progress table
 counts completed pairs only, as the Elo does, and Ctrl-C stops a match with the report of the pairs completed
-so far. Most games between equal networks are draws, and the pipeline's 2000 games at 50,000 nodes per move
-give about ±6 Elo.
+so far.
 
 With `--sprt ELO0 ELO1` the match is a sequential probability ratio test between the two Elo differences
 (normalized Elo, as on fishtest and OpenBench). It stops as soon as the log-likelihood ratio reaches a bound,
 ±2.94 for 5% chances of either wrong decision, or the `--games` limit, 40000 by default. The report then has
 an `SPRT` line in place of `Conf` and an `LLR` line, `LLR   | 2.95 (-2.94, 2.94) [0.00, 5.00]`, with the
-ratio, its bounds, and the hypotheses. A candidate that is clearly better or worse is decided within a few
-hundred games, and one that is about even runs to the limit.
+ratio, its bounds, and the hypotheses. Normalized Elo measures a difference against the spread of the pairs'
+results, and in matches between networks at 50,000 nodes 1 Elo is about 2.7 normalized Elo, so the
+pipeline's `[0, 10]` tests for a gain of about 4 Elo. It passes such a gain 97% of the time and an equal
+candidate 5% of the time. On average it rejects a candidate 10 Elo weaker in about 1,100 games and decides an
+equal one in about 6,400, so an equal one often reaches the pipeline's limit of 5000 games, where its Elo
+decides. `[0, 5]` would catch gains of about 2 Elo, but takes four times as long.
 
 **Sparring partners.** Matches at equal strength are mostly draws, so it helps to measure against other
 players too. One is the random mover (`--e2 random`), which Tsumi should never lose to. Another is

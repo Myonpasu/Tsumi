@@ -505,6 +505,8 @@ def main():
                  "no check)")
     if args.sprt and max(abs(x) for x in args.sprt) > 200:   # the estimate breaks down beyond
         ap.error("--sprt takes Elo differences within +-200: an SPRT is for small differences")
+    if args.sprt and args.sprt[0] >= args.sprt[1]:
+        ap.error("--sprt takes ELO0 below ELO1")
     seed = args.seed or time.time_ns()
     rng = random.Random(seed)
     try:

@@ -5,11 +5,12 @@
 #
 # It starts from nets/best.nnue, with its checkpoint nets/best.nnue.pt beside it to warm-start from.  Each
 # generation N: datagen with the best network -> data/genN, calibration, training -> nets/gen(N+1).nnue, a check
-# of the candidate against numpy, and a match against the best network, which the candidate replaces unless it
-# scores below it.  A candidate whose validation loss is no lower than the best network's on the same held-out
-# games is rejected without a match.  Safe to interrupt and run again with the same arguments: completed
-# generations and phases are skipped (an interrupted datagen carries on from the games it had; an interrupted
-# training or match starts again).  Set the variables below in the environment to change them, e.g.
+# of the candidate against numpy, and a match against the best network, an SPRT: the candidate replaces the best
+# network by passing it, or by an Elo above 0 if the SPRT reaches its game limit undecided.  A candidate whose
+# validation loss is no lower than the best network's on the same held-out games is rejected without a match.  Safe
+# to interrupt and run again with the same arguments: completed generations and phases are skipped (an interrupted
+# datagen carries on from the games it had; an interrupted training or match starts again).  Set the variables
+# below in the environment to change them, e.g.
 #   THREADS=16 GAMES=50000 tools/pipeline.sh 0 9999
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -54,7 +55,10 @@ DEVICE=${DEVICE:-}                      # e.g. cuda or cpu (default: cuda if ava
 RESUME=${RESUME:-1}                     # 1: warm-start each candidate from nets/best.nnue.pt; 0: train from scratch
 # Acceptance match
 REQUIRE_VAL_GAIN=${REQUIRE_VAL_GAIN:-1} # 1: skip candidates with higher validation loss than best network; 0: always play match
-MATCH_GAMES=${MATCH_GAMES:-2000}        # games, in pairs of colours from the same opening
+MATCH_SPRT=${MATCH_SPRT-0 10}           # an SPRT between these Elo differences (normalized Elo), which the candidate
+                                        #     must pass; empty: a match of MATCH_GAMES games, won by an Elo above 0
+MATCH_GAMES=${MATCH_GAMES:-5000}        # games, in pairs of colours from the same opening: the most an SPRT plays,
+                                        #     after which an Elo above 0 decides
 MATCH_NODES=${MATCH_NODES:-50000}       # nodes per move ...
 MATCH_TC=${MATCH_TC:-}                  # ... or a time control such as 10+0.1 instead
 MATCH_BOOK=${MATCH_BOOK:-}              # a book (as BOOK) to draw openings from; without one, every opening is a
@@ -76,6 +80,13 @@ done
 for v in BOOK MATCH_BOOK; do
     [[ -z "${!v}" || -f "${!v}" ]] || { echo "$v: ${!v} not found" >&2; exit 1; }
 done
+sprtopt=()
+if [[ -n "$MATCH_SPRT" ]]; then
+    read -r elo0 elo1 extra <<< "$MATCH_SPRT"
+    [[ "$elo0" =~ ^-?[0-9]+(\.[0-9]+)?$ && "$elo1" =~ ^-?[0-9]+(\.[0-9]+)?$ && -z "$extra" ]] \
+        || { echo "MATCH_SPRT takes two Elo differences, e.g. \"0 10\", or nothing for a fixed match (got '$MATCH_SPRT')" >&2; exit 1; }
+    sprtopt=(--sprt "$elo0" "$elo1")
+fi
 # The trainer's Python environment (numpy, torch, python-chess) must be the one python3 finds.
 if ! pyerr=$(python3 -c "import numpy, torch, chess" 2>&1); then
     echo "python3 cannot load the trainer's modules: activate the environment that has numpy, torch and python-chess" >&2
@@ -128,7 +139,9 @@ regularisers=""
 [[ "$LOSS_ASYMMETRY" != 0 ]] && regularisers="${regularisers:+$regularisers, }loss weighted 1 + $LOSS_ASYMMETRY where the network is more optimistic than the target"
 [[ -n "$regularisers" ]] && kv "" "$regularisers"
 kv ""           "history $([[ "$HISTORY" == 0 ]] && echo "all generations" || echo "up to $HISTORY generations")$([[ "$HISTORY_SAME_NET" == 1 ]] && echo " labelled by the best network")$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions"), $([[ "$RESUME" == 1 ]] && echo "warm-started from the best network's checkpoint$([[ -f "$best.pt" ]] || echo " (none yet: from scratch until a candidate is accepted)")" || echo "from scratch")"
-kv "match"      "$MATCH_GAMES games $([[ -n "$MATCH_TC" ]] && echo "at $MATCH_TC" || echo "at $MATCH_NODES nodes"), $CONCURRENCY at a time; a candidate replaces $best unless it scores below it"
+kv "match"      "$([[ -n "$MATCH_SPRT" ]] && echo "an SPRT [$elo0, $elo1] (normalized Elo) of up to $MATCH_GAMES" || echo "$MATCH_GAMES") games $([[ -n "$MATCH_TC" ]] && echo "at $MATCH_TC" || echo "at $MATCH_NODES nodes"), $CONCURRENCY at a time"
+if [[ -n "$MATCH_SPRT" ]]; then kv "" "a candidate replaces $best by passing it, or by an Elo above 0 if it reaches the limit undecided"
+else kv "" "a candidate replaces $best if its Elo is above 0"; fi
 match_openings="8 random plies from the start position"
 [[ "$OPENING_MAX_SCORE" -gt 0 ]] && match_openings+=", kept when the larger of the two networks' scores lies within $((OPENING_MIN_SCORE / 10))-$((OPENING_MAX_SCORE / 10)) cp"
 [[ -n "$MATCH_BOOK" ]] && match_openings="$((100 - MATCH_RANDOM_OPENINGS))% drawn from $MATCH_BOOK, $MATCH_RANDOM_OPENINGS% reached by $match_openings"
@@ -151,8 +164,10 @@ gen_summary() {
               | sed -nE "s/.*; (.*% below) the resumed network's ([0-9.]+).*/\1 the best network's \2/p
                          s/.*; no lower than the resumed network's ([0-9.]+) \((.*% above)\).*/no lower than the best network's \1 (\2)/p" || true)
     final=$(awk '/^Games +\|/ {games=$0; sub(/^Games +\| /, "", games)} /^Elo +\|/ {elo=$0; sub(/^Elo +\| /, "", elo)}
+                 /^LLR +\|/ {llr=$3} /^SPRT (passed|failed|undecided)/ {sprt=$2; sub(/:$/, "", sprt)}
                  /^not played: / {skip=$0; sub(/^not played: /, "not played, ", skip); sub(/ \(logs\/.*\)$/, "", skip)}
-                 END {if (elo != "") print games ", Elo " elo; else if (skip != "") print skip}' "logs/match_gen$g.log" 2>/dev/null || true)
+                 END {if (elo != "") print games ", Elo " elo (sprt != "" ? ", SPRT " sprt " (LLR " llr ")" : "")
+                      else if (skip != "") print skip}' "logs/match_gen$g.log" 2>/dev/null || true)
     kv "data"     "${npos:-?} positions in data/gen$g/data.bin from ${games_line:-? games}${dt:+  ($(fmt_dur "$dt"))}"
     kv "training" "nets/gen$((g+1)).nnue: ${val:-?}${vs_best:+, $vs_best}${tt:+  ($(fmt_dur "$tt"))}"
     kv "match"    "gen$((g+1)) vs best: ${final:-?}${mt:+  ($(fmt_dur "$mt"))}"
@@ -168,7 +183,20 @@ match_result() { grep -E '^Elo +\| ' "logs/match_gen$1.log" 2>/dev/null | tail -
 # Whether the candidate of generation N failed to lower the validation loss of the network it resumed from, as the
 # trainer's "kept" line says (it compares them at full precision); a candidate trained from scratch has no such line.
 no_val_gain() { grep -qE "^  kept .*no (lower|better) than the resumed network" "logs/train_gen$1.log" 2>/dev/null; }
-verdict() { awk "BEGIN{exit !($1 >= 0)}" && echo accepted || echo rejected; }
+verdict() { awk "BEGIN{exit !($1 > 0)}" && echo accepted || echo rejected; }
+# The decision on generation N's match, in $outcome (accepted or rejected) and $why: the SPRT's own when it decided,
+# otherwise (an SPRT that reached its game limit undecided, or a fixed match) whether the candidate's Elo is above 0.
+decide() {
+    local log="logs/match_gen$1.log" elo
+    read -r elo _ <<< "$(match_result "$1")"
+    if grep -q '^SPRT passed' "$log"; then outcome=accepted why="the SPRT passed"
+    elif grep -q '^SPRT failed' "$log"; then outcome=rejected why="the SPRT failed"
+    else
+        outcome=$(verdict "$elo")
+        why="its Elo is $([[ "$outcome" == accepted ]] || echo "not ")above 0"
+        if grep -q '^SPRT undecided' "$log"; then why="the SPRT reached its game limit undecided, and $why"; fi
+    fi
+}
 # The candidate of generation N replaces the best network: the network first and its checkpoint second, each copied
 # beside its target and moved into place, so that no file is ever half-written and a run interrupted in between
 # can tell (the best network is then the candidate already) and finish the replacement.
@@ -209,7 +237,8 @@ for gen in $(seq "$first" "$last"); do
             rm -f "logs/match_gen$gen.running"
         elif [[ -n "$elo" && ! -f "logs/match_gen$gen.running" ]]; then
             # A finished match without a decision file (logs written before this script kept them): decided by the log.
-            echo "$(verdict "$elo") $elo $err" > "$decision"
+            decide "$gen"
+            echo "$outcome $elo $err" > "$decision"
         fi
     fi
     # A decided generation whose candidate or match log was deleted is redone from there - unless the candidate had
@@ -326,7 +355,7 @@ for gen in $(seq "$first" "$last"); do
         limitopt=(--nodes "$MATCH_NODES")
         if [[ -n "$MATCH_TC" ]]; then limitopt=(--tc "$MATCH_TC"); fi
         python3 tools/match.py --e1 ./tsumi --e2 ./tsumi --opt1 "EvalFile=$net" --opt2 "EvalFile=$best" --name1 "gen$((gen+1))" --name2 "best" \
-            --games "$MATCH_GAMES" "${limitopt[@]}" ${MATCH_BOOK:+--book "$MATCH_BOOK" --random-openings "$MATCH_RANDOM_OPENINGS"} \
+            --games "$MATCH_GAMES" "${sprtopt[@]}" "${limitopt[@]}" ${MATCH_BOOK:+--book "$MATCH_BOOK" --random-openings "$MATCH_RANDOM_OPENINGS"} \
             --opening-min-score "$((OPENING_MIN_SCORE / 10))" --opening-max-score "$((OPENING_MAX_SCORE / 10))" \
             --concurrency "$CONCURRENCY" --pgn "logs/match_gen$gen.pgn" | tee -i "logs/match_gen$gen.log"
         read -r elo err <<< "$(match_result "$gen")"
@@ -337,13 +366,15 @@ for gen in $(seq "$first" "$last"); do
     echo
     rule "generation $gen: summary"
     gen_summary "$gen" "$data_time" "$train_time" "$match_time"
-    if [[ -n "$elo" && "$(verdict "$elo")" == accepted ]]; then
+    outcome=rejected why=""
+    if [[ -n "$elo" ]]; then decide "$gen"; fi
+    if [[ "$outcome" == accepted ]]; then
         promote "$gen"
-        kv "decision" "ACCEPTED: $net is the new $best"
+        kv "decision" "ACCEPTED: $net is the new $best ($why)"
     else
-        kv "decision" "REJECTED: $best stays"
+        kv "decision" "REJECTED: $best stays${why:+ ($why)}"
     fi
-    if [[ -n "$elo" ]]; then echo "$(verdict "$elo") $elo $err" > "$decision"; else echo rejected > "$decision"; fi
+    if [[ -n "$elo" ]]; then echo "$outcome $elo $err" > "$decision"; else echo rejected > "$decision"; fi
     rm -f "logs/match_gen$gen.running"
     kv "time"     "$(elapsed "$gen_start") for this generation"
 done
