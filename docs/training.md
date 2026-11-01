@@ -279,8 +279,10 @@ The Elo difference comes with its 95% confidence interval, the second line gives
 engines' threads and hash (`--threads` and `--hash` set both engines, an engine's own `--opt` wins, and engine
 1's / engine 2's are shown where they differ), and `Penta` counts the pairs of games by outcome, LL, LD, DD or
 WL, WD, WW. Selfmate has a strong first-move advantage, which the two games of a pair largely cancel, so the
-statistics are computed over the pairs (the pentanomial model of fishtest and OpenBench). Most games between
-equal networks are draws, and the pipeline's 2000 games at 50,000 nodes per move give about ±6 Elo.
+statistics are computed over the pairs (the pentanomial model of fishtest and OpenBench). The progress table
+counts completed pairs only, as the Elo does, and Ctrl-C stops a match with the report of the pairs completed
+so far. Most games between equal networks are draws, and the pipeline's 2000 games at 50,000 nodes per move
+give about ±6 Elo.
 
 With `--sprt ELO0 ELO1` the match is a sequential probability ratio test between the two Elo differences
 (normalized Elo, as on fishtest and OpenBench). It stops as soon as the log-likelihood ratio reaches a bound,

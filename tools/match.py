@@ -7,8 +7,9 @@ random-play positions (random legal moves from the start position, kept when the
 the upper hand without the game being decided), positions drawn at random from --book (FEN/EPD lines or PGN
 games), or a mix (--random-openings); each is played with both colours, as fishtest plays its books.  The result
 is reported in the form engine tests are usually quoted in: the Elo difference with its 95% confidence interval,
-the configuration, the game counts, and the pentanomial counts of the pairs of games.  With --sprt the match is a
-sequential probability ratio test, which stops as soon as it is decided.
+the configuration, the game counts, and the pentanomial counts of the pairs of games, counting completed pairs
+only, as the progress table does.  With --sprt the match is a sequential probability ratio test, which stops as
+soon as it is decided.  Ctrl-C stops a match with the result of the pairs completed so far.
 
 Examples:
   python3 tools/match.py --e1 ./tsumi --e2 ./tsumi-old --games 100 --tc 1+0.05 --concurrency 8
@@ -362,6 +363,9 @@ def fmt_err(err, decimals=0):
 # games of a pair tend to cancel, and treating the games as independent overstates the error.  A pair's outcome is
 # one of LL, LD, DD or WL, WD, WW, worth 0, 1/4, 1/2, 3/4, 1 of the pair's points (the pentanomial model).
 
+HALF_POINTS = {"w": 2, "d": 1, "l": 0}   # a game's half-points for engine 1; a pair's sum indexes the pentanomial
+
+
 def logistic_elo(score):
     """The Elo difference that gives an expected score, capped at the Elo of 0.1% and 99.9%."""
     score = min(max(score, 1e-3), 1 - 1e-3)
@@ -578,23 +582,40 @@ def main():
               f"LLR leaves ({-SPRT_BOUND:.2f}, {SPRT_BOUND:.2f})")
     print(f"  {'openings':<16}{openings_desc}")
     print(f"  {'engines':<16}{args.name1}: {args.e1} {' '.join(args.opt1 or [])}   |   {args.name2}: {args.e2} {' '.join(args.opt2 or [])}")
-    # Progress is printed at most 40 times, at a round number of games (every 1, 5, 10, 50, 100, 500, ... games),
-    # or every 100 games for an SPRT, whose length is unknown, and after the last one.  The Elo and its error bar
-    # are those of the pairs completed so far.
+    # Progress is printed at most 40 times, when the completed pairs reach a round number of games (every 2, 10, 50,
+    # 100, 500, ... games), or every 100 games for an SPRT, whose length is unknown, and once more at the end.  Every
+    # column counts the completed pairs only, the games the Elo is computed from: the first game of a pair still in
+    # play would weigh one colour more than the other.
     step, five = 1, True
     while total / step > 40:
         step *= 5 if five else 2
         five = not five
     if args.sprt:
         step = min(step, 100)
+    if step % 2:
+        step *= 2
     print(f"\n  {'games':>12}  {'W':>5}  {'L':>5}  {'D':>5}  {'score':>6}  {'elo':>15}{'     LLR' if args.sprt else ''}  "
           f"{'elapsed':>8}  {'ETA':>8}")
     t_start = time.time()
 
     failures = []
-    interrupted = threading.Event()   # Ctrl-C
+    interrupted = threading.Event()   # Ctrl-C: the pairs in play are given up
     decided = threading.Event()       # the SPRT has decided: the pairs not yet started are not played
     live = set()                      # the engines of the pairs in play
+    played = 0                        # games finished, the given-up first games of pairs included
+    shown = 0                         # the games of the last progress row
+
+    def progress_row():
+        nonlocal shown
+        wins, losses, draws = stats["w"], stats["l"], stats["d"]
+        n = wins + losses + draws
+        e, err = elo_interval(pent)
+        secs = time.time() - t_start
+        eta = fmt_time(secs * (total - n) / n) if n < total and not args.sprt else "-"
+        print(f"  {n:>6}/{total:<5}  {wins:>5}  {losses:>5}  {draws:>5}  {(wins + draws / 2) / n:>6.1%}  "
+              f"{signed(e):>7} +- {fmt_err(err):<4}{f'  {fixed(llr(pent, *args.sprt), 2):>6}' if args.sprt else ''}  "
+              f"{fmt_time(secs):>8}  {eta:>8}", flush=True)
+        shown = n
 
     def opening(i, engines):
         """The pair's opening: its book position, or a random-play one its engines judge, from its own generator so
@@ -610,19 +631,17 @@ def main():
     def run_pair(i):
         if interrupted.is_set() or decided.is_set():
             return
-        committed = []   # the games of this pair already counted: taken back if the pair fails
         try:
-            play_pair(i, committed)
+            play_pair(i)
         except (OSError, RuntimeError, ValueError) as e:   # an engine died or broke the protocol
+            if interrupted.is_set():   # killed by the interrupt, not a failure
+                return
             with lock:
                 failures.append(i)
-                for key, game in committed:
-                    stats[key] -= 1
-                    games_out.remove(game)
-            if not interrupted.is_set():   # killed by the interrupt, not a failure
-                print(f"opening {i + 1}: {type(e).__name__}: {e} (the pair is left out)", file=sys.stderr, flush=True)
+            print(f"opening {i + 1}: {type(e).__name__}: {e} (the pair is left out)", file=sys.stderr, flush=True)
 
-    def play_pair(i, committed):
+    def play_pair(i):
+        nonlocal played
         engines = []
         try:
             engines.append(make_engine(args.e1, o1, i, shared))
@@ -630,31 +649,26 @@ def main():
             with lock:
                 live.update(engines)
             start = opening(i, engines)
-            points = 0.0
+            results = []   # engine 1's outcome and the game, for each colour: counted once the pair is complete
             for swap in (False, True):
+                if interrupted.is_set():
+                    return
                 res, game = play_game(args, engines[0], engines[1], start, swap)
                 game.headers["Round"] = str(i + 1)
-                # The result from engine 1's point of view.
                 e1_white = not swap
-                key = "d" if res == "1/2-1/2" else "w" if (res == "1-0") == e1_white else "l"
-                points += {"w": 1.0, "d": 0.5, "l": 0.0}[key]
+                results.append(("d" if res == "1/2-1/2" else "w" if (res == "1-0") == e1_white else "l", game))
                 with lock:
+                    played += 1
+            with lock:
+                for key, game in results:
                     stats[key] += 1
                     games_out.append(game)
-                    committed.append((key, game))
-                    if swap:
-                        pent[int(points * 2)] += 1
-                        if args.sprt and abs(llr(pent, *args.sprt)) >= SPRT_BOUND:
-                            decided.set()
-                    wins, losses, draws = stats["w"], stats["l"], stats["d"]
-                    n = wins + losses + draws
-                    if n % step == 0 or n == total:
-                        e, err = elo_interval(pent)
-                        secs = time.time() - t_start
-                        eta = fmt_time(secs * (total - n) / n) if n < total and not args.sprt else "-"
-                        print(f"  {n:>6}/{total:<5}  {wins:>5}  {losses:>5}  {draws:>5}  {(wins + draws / 2) / n:>6.1%}  "
-                              f"{signed(e):>7} +- {fmt_err(err):<4}{f'  {fixed(llr(pent, *args.sprt), 2):>6}' if args.sprt else ''}  "
-                              f"{fmt_time(secs):>8}  {eta:>8}", flush=True)
+                pent[sum(HALF_POINTS[key] for key, _ in results)] += 1
+                if args.sprt and abs(llr(pent, *args.sprt)) >= SPRT_BOUND:
+                    decided.set()
+                n = stats["w"] + stats["l"] + stats["d"]
+                if n % step == 0 or n == total:
+                    progress_row()
         finally:
             with lock:
                 live.difference_update(engines)
@@ -664,16 +678,19 @@ def main():
     ex = ThreadPoolExecutor(max_workers=args.concurrency)
     try:
         list(ex.map(run_pair, range(pairs)))
-    except KeyboardInterrupt:
+        ex.shutdown(wait=True)
+    except KeyboardInterrupt:   # the result counts the pairs completed so far
         interrupted.set()
         with lock:
             for e in live:
                 e.kill()
         ex.shutdown(wait=True, cancel_futures=True)
-        played = stats["w"] + stats["l"] + stats["d"]
-        print(f"\ninterrupted after {played} of {total} games: no result", flush=True)
+    n = stats["w"] + stats["l"] + stats["d"]
+    if n == 0 and interrupted.is_set():
+        print(f"\ninterrupted after {played} of {total} games, before any pair was complete: no result", flush=True)
         sys.exit(130)
-    ex.shutdown(wait=True)
+    if n and n != shown:   # the last completed pairs, which no row has shown yet
+        progress_row()
 
     # The result in the form engine tests are usually quoted in: the Elo and its 95% interval, the limit per move
     # with the engines' threads and hash (engine 1's / engine 2's where they differ), the SPRT's LLR with its bounds
@@ -695,17 +712,22 @@ def main():
         ratio = llr(pent, *args.sprt)
         lines.append("SPRT " + ("passed: the LLR reached the upper bound (H1 accepted)" if ratio >= SPRT_BOUND else
                                 "failed: the LLR reached the lower bound (H0 accepted)" if ratio <= -SPRT_BOUND else
+                                "undecided: the match was interrupted" if interrupted.is_set() else
                                 f"undecided: the limit of {total} games was reached (--games)"))
     if drawn["played"] and args.opening_max_score:
         lines.append(f"Openings: {drawn['positions']} random-play positions drawn, {drawn['played']} "
                      f"({drawn['played'] / drawn['positions']:.0%}) within {args.opening_min_score}-{args.opening_max_score} cp "
                      "and played")
+    if interrupted.is_set():
+        lines.append(f"Interrupted after {played} of {total} games: the result counts the {n} games of completed pairs")
     print("\n" + "\n".join(lines))
-    if args.pgn:
+    if args.pgn:   # the games the result counts
         with open(args.pgn, "w") as f:
             f.writelines(str(g) + "\n\n" for g in games_out)
     if failures:
-        sys.exit(f"{len(failures)} of {pairs} openings failed (see above): the result counts the others only")
+        print(f"{len(failures)} of {pairs} openings failed (see above): the result counts the others only", file=sys.stderr)
+    if interrupted.is_set() or failures:
+        sys.exit(130 if interrupted.is_set() else 1)
 
 
 if __name__ == "__main__":
