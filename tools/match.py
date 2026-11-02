@@ -603,6 +603,7 @@ def main():
     failures = []
     interrupted = threading.Event()   # Ctrl-C: the pairs in play are given up
     decided = threading.Event()       # the SPRT has decided: the pairs not yet started are not played
+    sprt_decision = {}                # when the LLR first left the bounds: "outcome", passed or failed, and "games"
     live = set()                      # the engines of the pairs in play
     played = 0                        # games finished, the given-up first games of pairs included
     shown = 0                         # the games of the last progress row
@@ -666,10 +667,14 @@ def main():
                     stats[key] += 1
                     games_out.append(game)
                 pent[sum(HALF_POINTS[key] for key, _ in results)] += 1
-                if args.sprt and abs(llr(pent, *args.sprt)) >= SPRT_BOUND:
-                    decided.set()
                 n = stats["w"] + stats["l"] + stats["d"]
-                if n % step == 0 or n == total:
+                # The decision is the LLR's first crossing of a bound.  The pairs then in play are played out and
+                # counted, and may move the LLR back inside the bounds, but the decision stands.
+                ratio = llr(pent, *args.sprt) if args.sprt and not sprt_decision else 0.0
+                if abs(ratio) >= SPRT_BOUND:
+                    sprt_decision.update(outcome="passed" if ratio > 0 else "failed", games=n)
+                    decided.set()
+                if n % step == 0 or n == total or abs(ratio) >= SPRT_BOUND:
                     progress_row()
         finally:
             with lock:
@@ -710,12 +715,16 @@ def main():
                      f"[{args.sprt[0]:.2f}, {args.sprt[1]:.2f}]")
     lines.append(f"Games | N: {wins + losses + draws} W: {wins} L: {losses} D: {draws}")
     lines.append(f"Penta | [{', '.join(map(str, pent))}]")
-    if args.sprt:
-        ratio = llr(pent, *args.sprt)
-        lines.append("SPRT " + ("passed: the LLR reached the upper bound (H1 accepted)" if ratio >= SPRT_BOUND else
-                                "failed: the LLR reached the lower bound (H0 accepted)" if ratio <= -SPRT_BOUND else
-                                "undecided: the match was interrupted" if interrupted.is_set() else
-                                f"undecided: the limit of {total} games was reached (--games)"))
+    if args.sprt and sprt_decision:
+        outcome, at = sprt_decision["outcome"], sprt_decision["games"]
+        line = (f"SPRT {outcome}: the LLR reached the {'upper' if outcome == 'passed' else 'lower'} bound"
+                + (f" at {at} games" if n > at else "") + f" ({'H1' if outcome == 'passed' else 'H0'} accepted)")
+        if n > at:
+            line += f"; the {(n - at) // 2} pairs then in play were played out"
+        lines.append(line)
+    elif args.sprt:
+        lines.append("SPRT undecided: " + ("the match was interrupted" if interrupted.is_set() else
+                                           f"the limit of {total} games was reached (--games)"))
     if drawn["played"] and args.opening_max_score:
         lines.append(f"Openings: {drawn['positions']} random-play positions drawn, {drawn['played']} "
                      f"({drawn['played'] / drawn['positions']:.0%}) within {args.opening_min_score}-{args.opening_max_score} cp "

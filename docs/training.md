@@ -288,7 +288,9 @@ so far.
 
 With `--sprt ELO0 ELO1` the match is a sequential probability ratio test between the two Elo differences
 (normalized Elo, as on fishtest and OpenBench). It stops as soon as the log-likelihood ratio reaches a bound,
-±2.94 for 5% chances of either wrong decision, or the `--games` limit, 40000 by default. The report then has
+±2.94 for 5% chances of either wrong decision, or the `--games` limit, 40000 by default. The pairs in play at
+that moment are played out and counted, so the final ratio can end a little inside the bounds, but the
+decision stands, and the report says after how many games it was made. The report then has
 an `SPRT` line in place of `Conf` and an `LLR` line, `LLR   | 2.95 (-2.94, 2.94) [0.00, 5.00]`, with the
 ratio, its bounds, and the hypotheses. Normalized Elo measures a difference against the spread of the pairs'
 results, and in matches between networks at 50,000 nodes 1 Elo is about 2.7 normalized Elo, so the
