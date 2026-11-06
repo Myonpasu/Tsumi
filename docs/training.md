@@ -59,11 +59,15 @@ The settings are environment variables:
 | `RANDOM_MULTI_PV`, `RANDOM_MULTI_PV_DIFF` | 3, 250 | a random move is one of the best 3 within 0.25 pawns of the best |
 | `WRITE_MIN_PLY` | 5 | positions before this ply are not recorded |
 | `HIDDEN` | 1024 | network width (units per side), a multiple of 64; must match the checkpoint it warm-starts from |
-| `EPOCHS` | 5 | epochs per generation (the learning rate halves every 3) |
-| `LR`, `LR_SCRATCH` | 2e-7, 1e-3 | learning rate when warm-starting, and from scratch |
+| `EPOCHS` | 5 | epochs per generation |
+| `LR`, `LR_SCRATCH` | 2e-7, 1e-3 | learning rate when warm-starting (halved every 3 epochs), and the peak of the one-cycle schedule from scratch |
+| `WEIGHT_DECAY` | 0 | AdamW's weight decay (0: plain Adam) |
+| `EMA` | 0.999 | the candidate is a moving average of the weights with this decay per batch (0: the weights themselves) |
+| `RANDOM_SKIP` | 0 | train each epoch on one position in this + 1, drawn afresh each epoch |
 | `LAMBDA`, `END_LAMBDA` | 0.67, 0.67 | weight of the search score against the game result, at the first and last epoch (moved linearly between them) |
 | `RESULT_FILTER` | 1 | train on a position with the probability the score model gives its game's result (0: on every position) |
 | `LOSS_ASYMMETRY` | 0.2 | weight the loss 1 + this where the network is more optimistic than the target |
+| `LOSS_EXPONENT` | 2 | the power of the error the loss takes (Stockfish uses 2.4) |
 | `ANCHOR_P` | 0.01 | the output curve's win probability at 0 (see [output units](#output-units)) |
 | `KEEP_BEST` | 1 | keep the epoch with the lowest validation loss (0: the last) |
 | `HISTORY`, `MAX_POSITIONS` | 10, 0 | at most this many generations of data (0: all), and positions (0: no cap) |
@@ -201,12 +205,25 @@ most positions.
 
 The network's output *y* goes through a fixed curve, on which the side to move wins with probability
 `win(y) = 1 / (1 + (1/p − 1)^(1 − y))` and loses with probability `win(−y)`, *p* being `--anchor-p` (0.01).
-The loss is the squared difference between the expected result on that curve and the target, weighted
-1 + `--loss-asymmetry` (1.2) where the network is more optimistic than the target, since an evaluation too
-high misleads a search more than one too low (Stockfish and PlentyChess weight their losses the same way).
+The loss is the difference between the expected result on that curve and the target, to the power
+`--loss-exponent` (2, the squared error; Stockfish's trainer uses about 2.4), weighted 1 + `--loss-asymmetry`
+(1.2) where the network is more optimistic than the target, since an evaluation too high misleads a search
+more than one too low (Stockfish and PlentyChess weight their losses the same way).
 An output of +1 is therefore a 50% chance of winning, whatever the scale of the search scores the network
 learnt from, and the engine shows it as +1.00. The smaller *p*, the steeper the curve and the less weight
 balanced positions get.
+
+### Optimisation
+
+The optimiser is AdamW with `--weight-decay` (0 by default, which is plain Adam; the trainers built on bullet,
+Reckless's and PlentyChess's, use 0.01 from scratch). A run from scratch follows Stockfish's one-cycle
+schedule, a linear warmup from a 25th of `--lr` over the first `--warmup` (5%) of the run and then a cosine
+decay to a thousandth of that, and a resumed run halves the rate every `--lr-step` (3) epochs, unless
+`--schedule` says otherwise. `--random-skip N` trains each epoch on one position in *N* + 1, drawn afresh
+every epoch, so that successive epochs see different samples of games whose positions are much alike (and an
+epoch takes a fraction of the time). The network validated and written is an exponential moving average of
+the weights with decay `--ema` (0.999) per batch, which smooths out where the last batches happened to leave
+them; `--ema 0` takes the weights themselves.
 
 ### The table
 
@@ -250,7 +267,7 @@ from scratch on all of it, and continue the loop from there:
 
 ```bash
 ./tsumi rescore --net nets/best.nnue --threads 16 --out data/rescored.bin --in data/gen*/data.bin
-python3 train/train.py --data data/rescored.bin --out nets/wide.nnue --hidden 1536 --epochs 16 --lr-step 4 --keep-best
+python3 train/train.py --data data/rescored.bin --out nets/wide.nnue --hidden 1536 --epochs 16 --weight-decay 0.01 --keep-best
 ```
 
 Then make the new network `nets/best.nnue` (with its `.pt`) and run the loop with `HIDDEN=1536`.

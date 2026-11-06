@@ -19,11 +19,21 @@ wld filter), so a result the score makes unlikely, a won position lost to a late
 rather than teach the network the mistake.  --no-result-filter keeps every position.
 
 Loss.  The network's output y goes through a fixed curve: the side to move wins with probability
-win(y) = 1 / (1 + (1/p - 1)^(1 - y)) and loses with win(-y), p being --anchor-p, and the loss is the squared
-difference between the expected result on that curve and the target, weighted 1 + --loss-asymmetry where the
-network is more optimistic than the target (an evaluation too high misleads a search more than one too low).  An
-output of +1 is a 50% chance of winning, whatever the scale of the search scores the network learnt from; the
-engine multiplies y by SCALE (1000) into its internal units and shows it as +1.00.
+win(y) = 1 / (1 + (1/p - 1)^(1 - y)) and loses with win(-y), p being --anchor-p, and the loss is the difference
+between the expected result on that curve and the target, to the power --loss-exponent (2, the squared error, by
+default), weighted 1 + --loss-asymmetry where the network is more optimistic than the target (an evaluation too
+high misleads a search more than one too low).  An output of +1 is a 50% chance of winning, whatever the scale of
+the search scores the network learnt from; the engine multiplies y by SCALE (1000) into its internal units and
+shows it as +1.00.
+
+Optimisation.  AdamW with --weight-decay, which is plain Adam at the default of 0.  --schedule step multiplies the
+learning rate by --lr-decay every --lr-step epochs; onecycle warms it up linearly from a 25th of --lr over the
+first --warmup of the run and then lowers it along a cosine to a thousandth of that.  The default is onecycle from
+scratch and step when resuming.  --random-skip N trains each epoch on one position in N + 1, drawn afresh every
+epoch, so that the epochs see different samples of games whose positions are much alike.  The network validated
+and written is an exponential moving average of the weights with decay --ema per batch (0.999: over the last
+thousand or so), which smooths out where the last batches happened to leave them; --ema 0 takes the weights
+themselves.
 
 Validation.  Whole games holding about --val-fraction of the positions are held out (the positions of a game are
 alike and share its result, so a split by position would reward memorising games), and filtered like the training
@@ -35,11 +45,11 @@ writes the epoch with the lowest val loss rather than the last.
 
 --resume continues from a .pt checkpoint (as the pipeline does whenever nets/best.nnue.pt exists), and the table
 then starts with the resumed network's own losses.  --epochs 0 stops there: it checks the network of --resume on
-the held-out positions of the --data and writes nothing.  The learning rate is multiplied by --lr-decay every
---lr-step epochs.  The .nnue is written with its units reordered for the engine's sparse first layer
-(train/ftperm.py: the same evaluations, faster); the .pt keeps the trained order.
+the held-out positions of the --data and writes nothing.  The .nnue is written with its units reordered for the
+engine's sparse first layer (train/ftperm.py: the same evaluations, faster); the .pt keeps the trained order.
 """
 import argparse
+import copy
 import glob
 import os
 import queue
@@ -222,8 +232,20 @@ def main():
     ap.add_argument("--batch", type=int, default=16384, help="positions per batch (default 16384)")
     ap.add_argument("--lr", type=float, default=None,
                     help=f"learning rate (default {LR_RESUME:g} with --resume, {LR_SCRATCH:g} from scratch)")
-    ap.add_argument("--lr-decay", type=float, default=0.5, help="multiply the learning rate by this every --lr-step epochs (default 0.5)")
-    ap.add_argument("--lr-step", type=int, default=3, help="epochs between those decays (default 3)")
+    ap.add_argument("--schedule", choices=["step", "onecycle"],
+                    help="step: the learning rate multiplied by --lr-decay every --lr-step epochs; onecycle: a linear warmup "
+                         "from a 25th of --lr over --warmup of the run, then a cosine decay to a thousandth of that (default "
+                         "onecycle from scratch, step with --resume)")
+    ap.add_argument("--lr-decay", type=float, default=0.5, help="the step schedule's factor (default 0.5)")
+    ap.add_argument("--lr-step", type=int, default=3, help="epochs between the step schedule's decays (default 3)")
+    ap.add_argument("--warmup", type=float, default=0.05, help="the share of a onecycle run spent warming up (default 0.05)")
+    ap.add_argument("--weight-decay", type=float, default=0.0,
+                    help="AdamW's decoupled weight decay, multiplied by the learning rate each step (default 0: plain Adam)")
+    ap.add_argument("--ema", type=float, default=0.999,
+                    help="validate and write an exponential moving average of the weights with this decay per step (default "
+                         "0.999; 0: the weights themselves)")
+    ap.add_argument("--random-skip", type=int, default=0,
+                    help="train each epoch on one position in N + 1, drawn afresh every epoch (default 0: every position)")
     ap.add_argument("--lambda", dest="lam", type=float, default=0.67,
                     help="weight of the search score against the game result in the target at the first epoch (default 0.67; 1: the score alone)")
     ap.add_argument("--end-lambda", dest="end_lam", type=float, default=0.67, help="... and at the last epoch (default 0.67)")
@@ -231,6 +253,8 @@ def main():
                     help="keep a position with the probability the score model gives its game's result (default on)")
     ap.add_argument("--loss-asymmetry", type=float, default=0.2,
                     help="weight the loss 1 + this where the network is more optimistic than the target (default 0.2; 0: none)")
+    ap.add_argument("--loss-exponent", type=float, default=2.0,
+                    help="the power of the error the loss takes (default 2, the squared error)")
     ap.add_argument("--anchor-p", type=anchor_probability, default=ANCHOR_P,
                     help=f"the win probability at an output of 0 on the curve the output goes through, a decimal or a fraction "
                          f"(default {ANCHOR_P:g}); smaller is steeper and gives balanced positions less weight")
@@ -253,8 +277,13 @@ def main():
         args.lam = args.end_lam   # a check measures at --end-lambda alone
     if args.lr is None:
         args.lr = LR_RESUME if args.resume else LR_SCRATCH
-    if args.progress_every < 0 or args.epochs < 0 or args.batch <= 0 or args.lr_step <= 0:
-        sys.exit("--progress-every and --epochs must not be negative, --batch and --lr-step must be positive")
+    if args.schedule is None:
+        args.schedule = "step" if args.resume else "onecycle"
+    if args.progress_every < 0 or args.epochs < 0 or args.batch <= 0 or args.lr_step <= 0 or args.random_skip < 0:
+        sys.exit("--progress-every, --epochs and --random-skip must not be negative, --batch and --lr-step must be positive")
+    if not 0.0 < args.warmup < 1.0 or args.weight_decay < 0.0 or not 0.0 <= args.ema < 1.0 or args.loss_exponent < 1.0:
+        sys.exit("--warmup must be between 0 and 1, --weight-decay at least 0, --ema at least 0 and below 1, and "
+                 "--loss-exponent at least 1")
     if not 0.0 <= args.val_fraction < 1.0:
         sys.exit("--val-fraction must be at least 0 and below 1")
     if not 0.0 <= args.lam <= 1.0 or not 0.0 <= args.end_lam <= 1.0 or args.loss_asymmetry < 0.0:
@@ -323,29 +352,60 @@ def main():
                             "the result its game had")
     val_recs = data[val_idx]
     del val_idx
+    loss_desc = "squared error" if args.loss_exponent == 2.0 else f"error to the power {args.loss_exponent:g}"
     if args.loss_asymmetry:
-        kv("loss", f"squared error of the expected result, weighted {1.0 + args.loss_asymmetry:g} where the network is more "
+        kv("loss", f"{loss_desc} of the expected result, weighted {1.0 + args.loss_asymmetry:g} where the network is more "
                    "optimistic than the target")
     else:
-        kv("loss", "squared error of the expected result")
+        kv("loss", f"{loss_desc} of the expected result")
     # The curve the output goes through.
     curve = anchored_curve(args.anchor_p)
     w0, d0, _ = (float(v) for v in curve.wdl_np(0.0))
     kv("output units", f"anchored (p = {args.anchor_p:.4g}): an output of +1.00 is a 50% win, 0 a {w0:.0%} win and {d0:.0%} draw")
-    n_batches = len(train_idx) // args.batch
-    per_epoch = n_batches * args.batch   # positions trained on per epoch: the last, partial batch is left out
+    # An epoch trains on the positions (one in random_skip + 1 of them) in whole batches, the last partial batch left
+    # out; with skipping, the epochs differ a little in size, and the expected size serves for the schedule and ETA.
+    n_batches = len(train_idx) // (args.random_skip + 1) // args.batch
+    per_epoch = n_batches * args.batch
     threads = f", {args.threads} thread{'s' if args.threads != 1 else ''}" if args.threads else ""
     if checking:
         kv("run", f"no training (--epochs 0), {device}{threads}")
     else:
         if n_batches == 0:
-            sys.exit(f"fewer training positions ({len(train_idx):,}) than one batch ({args.batch:,}): lower --batch")
-        schedule = f"x{args.lr_decay:g} every {args.lr_step} epochs" if args.lr_decay != 1.0 else "constant"
-        kv("learning rate", f"{args.lr:.1e}, {schedule}")
+            sys.exit(f"fewer training positions ({len(train_idx) // (args.random_skip + 1):,}) than one batch ({args.batch:,}): "
+                     "lower --batch" + (" or --random-skip" if args.random_skip else ""))
+        if args.schedule == "onecycle":
+            schedule = (f"{args.lr:.1e} at the peak, one cycle: a linear warmup from {args.lr / 25:.1e} over the first "
+                        f"{args.warmup:.0%} of the run, then a cosine decay to {args.lr / 25000:.1e}")
+        else:
+            schedule = f"{args.lr:.1e}, " + (f"x{args.lr_decay:g} every {args.lr_step} epochs" if args.lr_decay != 1.0 else "constant")
+        kv("learning rate", schedule)
+        kv("optimiser", f"AdamW, weight decay {args.weight_decay:g}" if args.weight_decay else "Adam")
         kv("run", f"{args.epochs} epoch{'s' if args.epochs != 1 else ''}, batch {args.batch:,}, {device}{threads}"
+           + (f"; one position in {args.random_skip + 1} each epoch, drawn afresh" if args.random_skip else "")
            + (f"; a row every {args.progress_every:,} positions" if args.progress_every else ""))
+        if args.ema:
+            kv("", f"validated and written: the moving average of the weights, decay {args.ema:g} per batch")
         os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    n_steps = args.epochs * n_batches   # the schedule reaches its final rate at the last step (one more than it counts)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=n_steps + 1, pct_start=args.warmup, div_factor=25.0,
+                                                final_div_factor=1000.0, cycle_momentum=False) if args.schedule == "onecycle" and n_steps else None
+    sched_steps = 0
+    # The network validated and written: the moving average of the weights, which trails the weights by a few
+    # hundred batches once settled, or the model itself.  The average starts at the weights and, for its first
+    # thousands of batches, with a lower decay than asked, so that it does not keep the starting weights for long.
+    averaged = copy.deepcopy(model) if args.ema else model
+    ema_steps = 0
+
+    def update_average():
+        nonlocal ema_steps
+        if not args.ema:
+            return
+        ema_steps += 1
+        decay = min(args.ema, (1.0 + ema_steps) / (10.0 + ema_steps))
+        with torch.no_grad():
+            for a, p in zip(averaged.parameters(), model.parameters()):
+                a.lerp_(p, 1.0 - decay)
     stats = {"truncated": 0}
 
     def to_device(arrays, non_blocking=False):
@@ -354,8 +414,9 @@ def main():
     final_lam = args.end_lam
 
     def loss_of(p, target):
-        """The loss of each position: squared error, weighted where the network is more optimistic than the target."""
-        err = (p - target) ** 2
+        """The loss of each position: the error to --loss-exponent, weighted where the network is more optimistic
+        than the target."""
+        err = (p - target) ** 2 if args.loss_exponent == 2.0 else (p - target).abs() ** args.loss_exponent
         if args.loss_asymmetry:
             err = err * (1.0 + args.loss_asymmetry * (p > target).to(err.dtype))
         return err
@@ -363,13 +424,13 @@ def main():
     def validate(recs):
         """The held-out positions' losses against the target at the final lambda, against the search score alone and
         against the game result alone (the last on the positions with a result label)."""
-        model.eval()
+        averaged.eval()
         lambdas = (final_lam, 1.0, 0.0)
         sums, counts = np.zeros(len(lambdas)), np.zeros(len(lambdas))
         with torch.no_grad():
             for b in range(0, len(recs), args.batch):
                 chunk = recs[b:b + args.batch]
-                p = curve.prob_torch(model(*to_device(extract(chunk, stats))))
+                p = curve.prob_torch(averaged(*to_device(extract(chunk, stats))))
                 labelled = torch.from_numpy(has_result(chunk)).to(device)
                 for k, lam in enumerate(lambdas):
                     err = loss_of(p, torch.from_numpy(make_targets(chunk, lam, score_model)).to(device))
@@ -377,7 +438,7 @@ def main():
                         err = err[labelled]
                     sums[k] += err.sum().item()
                     counts[k] += len(err)
-        model.train()
+        averaged.train()
         return sums / np.maximum(counts, 1)
 
     # The units are reordered for the engine's sparse first layer on a fixed sample of the training positions.
@@ -389,9 +450,9 @@ def main():
         """The checkpoint and the .nnue, each written to a temporary file and moved into place, so that a run stopped
         at any moment leaves the last complete pair."""
         nonlocal perm_rates
-        torch.save(model.state_dict(), args.out + ".pt.tmp")
+        torch.save(averaged.state_dict(), args.out + ".pt.tmp")
         os.replace(args.out + ".pt.tmp", args.out + ".pt")
-        model.export(args.out + ".tmp")
+        averaged.export(args.out + ".tmp")
         os.replace(args.out + ".tmp", args.out)
         assert perm_recs is not None
         perm_rates = permute_file(args.out, perm_recs, device=device)   # writes a .tmp and replaces too
@@ -449,11 +510,13 @@ def main():
     def val_cells(val):
         return {"val loss": f"{val[0]:.5f}", "vs score": f"{val[1]:.5f}", "vs result": f"{val[2]:.5f}"}
 
+    epoch_size = per_epoch   # the positions of the epoch in progress (they vary a little with --random-skip)
+
     def row(epoch, seen, train_loss, rate, val=None, lam=None, lr=None):
         """A row of the table: a progress row while the epoch runs (no validation losses, lambda or lr), or its last."""
         elapsed = time.time() - t_run
         done = (epoch - 1) * per_epoch + seen
-        cells = {"epoch": f"{epoch}/{args.epochs}", "done": f"{100 * seen // per_epoch}%", "train loss": f"{train_loss:.5f}",
+        cells = {"epoch": f"{epoch}/{args.epochs}", "done": f"{100 * seen // epoch_size}%", "train loss": f"{train_loss:.5f}",
                  "pos/s": f"{rate / 1000:.0f}k", "elapsed": fmt_duration(elapsed),
                  "ETA": "-" if done >= total else fmt_duration(elapsed / max(done, 1) * (total - done))}
         if val is not None:
@@ -478,11 +541,13 @@ def main():
             t0 = time.time()
             seen, loss_sum = 0, 0.0
             lam = args.lam + (args.end_lam - args.lam) * (epoch - 1) / max(args.epochs - 1, 1)
-            epoch_lr = args.lr * args.lr_decay ** ((epoch - 1) // args.lr_step)
-            for g in opt.param_groups:
-                g["lr"] = epoch_lr
+            if sched is None:
+                for g in opt.param_groups:
+                    g["lr"] = args.lr * args.lr_decay ** ((epoch - 1) // args.lr_step)
+            epoch_idx = train_idx if not args.random_skip else train_idx[rng.random(len(train_idx)) < 1.0 / (args.random_skip + 1)]
+            epoch_size = max(len(epoch_idx) // args.batch * args.batch, 1)
             next_row = args.progress_every
-            for inputs, target, shown_target in batch_iter(data, train_idx, args.batch, lam, final_lam, score_model, stats, rng):
+            for inputs, target, shown_target in batch_iter(data, epoch_idx, args.batch, lam, final_lam, score_model, stats, rng):
                 target_t = torch.from_numpy(target).to(device, non_blocking=True)
                 p = curve.prob_torch(model(*to_device(inputs, non_blocking=True)))
                 loss = loss_of(p, target_t).mean()
@@ -490,6 +555,10 @@ def main():
                 loss.backward()
                 opt.step()
                 model.clamp_weights()
+                update_average()
+                if sched is not None and sched_steps < n_steps:   # a skipping epoch may run a few batches long
+                    sched.step()
+                    sched_steps += 1
                 if shown_target is None:   # this epoch's lambda is the final one: the loss minimised is the one shown
                     shown = loss.item()
                 else:
@@ -499,13 +568,13 @@ def main():
                 loss_sum += shown * len(target)
                 if args.progress_every and seen >= next_row:
                     next_row += args.progress_every * ((seen - next_row) // args.progress_every + 1)
-                    if per_epoch - seen >= args.progress_every // 2:   # not just before the epoch's own row
+                    if epoch_size - seen >= args.progress_every // 2:   # not just before the epoch's own row
                         row(epoch, seen, loss_sum / seen, seen / (time.time() - t0))
             rate = seen / max(time.time() - t0, 1e-9)
             val = validate(val_recs) if validating else None
             if val is not None:
                 history[epoch] = val
-            row(epoch, seen, loss_sum / max(seen, 1), rate, val, lam, epoch_lr)
+            row(epoch, seen, loss_sum / max(seen, 1), rate, val, lam, opt.param_groups[0]["lr"])
             if stats["truncated"]:
                 print(f"  note: {stats['truncated']:,} positions so far had more than {MAX_THREATS} threats and lost the excess "
                       "(raise MAX_THREATS in features.py if this is more than a handful)", flush=True)

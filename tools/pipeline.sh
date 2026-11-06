@@ -34,15 +34,22 @@ RANDOM_MULTI_PV_DIFF=${RANDOM_MULTI_PV_DIFF:-250}   # RANDOM_MULTI_PV_DIFF inter
 WRITE_MIN_PLY=${WRITE_MIN_PLY:-5}       # positions before this ply of a game are not recorded
 # Training
 HIDDEN=${HIDDEN:-1024}                  # units per perspective (a multiple of 64; must match the checkpoint resumed)
-EPOCHS=${EPOCHS:-5}                     # epochs per generation; the learning rate halves every 3
-LR=${LR:-2e-7}                          # learning rate when warm-starting from the best network's checkpoint
-LR_SCRATCH=${LR_SCRATCH:-1e-3}          # learning rate when training from scratch (RESUME=0, or no checkpoint)
+EPOCHS=${EPOCHS:-5}                     # epochs per generation
+LR=${LR:-2e-7}                          # learning rate when warm-starting from the best network's checkpoint, halved
+                                        #     every 3 epochs
+LR_SCRATCH=${LR_SCRATCH:-1e-3}          # the peak learning rate when training from scratch (RESUME=0, or no checkpoint):
+                                        #     warmed up over the first 5% of the run and lowered along a cosine after
+WEIGHT_DECAY=${WEIGHT_DECAY:-0}         # AdamW's weight decay (0: plain Adam; bullet's trainers use 0.01 from scratch)
+EMA=${EMA:-0.999}                       # the candidate is a moving average of the weights with this decay per batch
+                                        #     (0: the weights themselves)
+RANDOM_SKIP=${RANDOM_SKIP:-0}           # train each epoch on one position in this + 1, drawn afresh (0: on every one)
 LAMBDA=${LAMBDA:-0.67}                  # weight of the search score against the game result in the target at the
 END_LAMBDA=${END_LAMBDA:-0.67}          #     first epoch, and at the last (interpolated linearly)
 RESULT_FILTER=${RESULT_FILTER:-1}       # 1: a position is trained on with the probability the score model gives its
                                         #     result, so results the score makes unlikely mostly drop out; 0: all kept
 LOSS_ASYMMETRY=${LOSS_ASYMMETRY:-0.2}   # the loss is weighted 1 + this where the network is more optimistic than the
                                         #     target
+LOSS_EXPONENT=${LOSS_EXPONENT:-2}       # the power of the error the loss takes (2: the squared error; Stockfish uses 2.4)
 ANCHOR_P=${ANCHOR_P:-0.01}              # the win probability at an output of 0 on the curve the output goes through
                                         #     (+1.00 is a 50% win on it): smaller is steeper (train/wdl.py)
 KEEP_BEST=${KEEP_BEST:-1}               # 1: each candidate is the epoch with the lowest validation loss; 0: the last
@@ -133,10 +140,12 @@ if [[ "$RANDOM_OPENINGS" -gt 0 ]]; then
 fi
 [[ "$RANDOM_OPENINGS" -lt 100 ]] && openings="${openings:+$openings, the rest }${BOOK:+drawn from }${BOOK:-the start position}"
 kv "openings"   "$openings"
-kv "training"   "$HIDDEN units, $EPOCHS epochs, lr $LR warm start / $LR_SCRATCH from scratch, lambda $LAMBDA$([[ "$LAMBDA" != "$END_LAMBDA" ]] && echo " -> $END_LAMBDA"), anchor p $ANCHOR_P$([[ "$KEEP_BEST" == 1 ]] && echo ", the best epoch kept")"
+kv "training"   "$HIDDEN units, $EPOCHS epochs, lr $LR warm start / $LR_SCRATCH from scratch$([[ "$WEIGHT_DECAY" != 0 ]] && echo ", weight decay $WEIGHT_DECAY"), lambda $LAMBDA$([[ "$LAMBDA" != "$END_LAMBDA" ]] && echo " -> $END_LAMBDA"), anchor p $ANCHOR_P$([[ "$KEEP_BEST" == 1 ]] && echo ", the best epoch kept")$([[ "$EMA" != 0 ]] && echo " (weights averaged, decay $EMA)")"
 regularisers=""
 [[ "$RESULT_FILTER" == 1 ]] && regularisers="results the score model finds unlikely mostly dropped"
 [[ "$LOSS_ASYMMETRY" != 0 ]] && regularisers="${regularisers:+$regularisers, }loss weighted 1 + $LOSS_ASYMMETRY where the network is more optimistic than the target"
+[[ "$LOSS_EXPONENT" != 2 ]] && regularisers="${regularisers:+$regularisers, }error to the power $LOSS_EXPONENT"
+[[ "$RANDOM_SKIP" != 0 ]] && regularisers="${regularisers:+$regularisers, }one position in $((RANDOM_SKIP + 1)) each epoch"
 [[ -n "$regularisers" ]] && kv "" "$regularisers"
 kv ""           "history $([[ "$HISTORY" == 0 ]] && echo "all generations" || echo "up to $HISTORY generations")$([[ "$HISTORY_SAME_NET" == 1 ]] && echo " labelled by the best network")$([[ "$MAX_POSITIONS" -gt 0 ]] && echo ", at most $MAX_POSITIONS positions"), $([[ "$RESUME" == 1 ]] && echo "warm-started from the best network's checkpoint$([[ -f "$best.pt" ]] || echo " (none yet: from scratch until a candidate is accepted)")" || echo "from scratch")"
 kv "match"      "$([[ -n "$MATCH_SPRT" ]] && echo "an SPRT [$elo0, $elo1] (normalized Elo) of up to $MATCH_GAMES" || echo "$MATCH_GAMES") games $([[ -n "$MATCH_TC" ]] && echo "at $MATCH_TC" || echo "at $MATCH_NODES nodes"), $CONCURRENCY at a time"
@@ -335,7 +344,8 @@ for gen in $(seq "$first" "$last"); do
         if [[ "$KEEP_BEST" == 1 ]]; then trainopt+=(--keep-best); fi
         if [[ "$RESULT_FILTER" != 1 ]]; then trainopt+=(--no-result-filter); fi
         python3 train/train.py --data "${datafiles[@]}" --out "$net" --hidden "$HIDDEN" --epochs "$EPOCHS" --lambda "$LAMBDA" \
-            --end-lambda "$END_LAMBDA" --loss-asymmetry "$LOSS_ASYMMETRY" --anchor-p "$ANCHOR_P" --max-positions "$MAX_POSITIONS" \
+            --end-lambda "$END_LAMBDA" --loss-asymmetry "$LOSS_ASYMMETRY" --loss-exponent "$LOSS_EXPONENT" --anchor-p "$ANCHOR_P" \
+            --weight-decay "$WEIGHT_DECAY" --ema "$EMA" --random-skip "$RANDOM_SKIP" --max-positions "$MAX_POSITIONS" \
             --progress-every "$PROGRESS_EVERY" ${DEVICE:+--device "$DEVICE"} "${trainopt[@]}" | tee -i "logs/train_gen$gen.log"
         python3 train/verify_net.py --net "$net" --data "data/gen$gen/data.bin" --count 100
         touch "$trained"
