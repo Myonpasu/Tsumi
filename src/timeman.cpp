@@ -61,7 +61,7 @@ void TimeManager::init(const Limits& limits, Color us, int gamePly, int moveOver
 double TimeManager::scale(int score, int scoreFourIterationsAgo, int iterationsSinceBestMoveChange, double bestMoveChanges, double effortShare) {
     // Score fell since the previous move or over the last four iterations: spend more (0.58-1.73x).
     const int reference = previousScore == VALUE_NONE ? score : previousScore;
-    const double fallingEval = std::clamp((11.48 + 2.30 * (reference - score) + 1.1 * (scoreFourIterationsAgo - score)) / 100.0, 0.576, 1.728);
+    const double fallingEval = std::clamp((11.48 + 0.70 * (reference - score) + 0.335 * (scoreFourIterationsAgo - score)) / 100.0, 0.576, 1.728);
     // Best move stable for many iterations: stop earlier; time saved on a stable move is available on the next.
     timeReduction = std::clamp(interpolate(iterationsSinceBestMoveChange, 4.96, 18.79, 0.639, 1.712), 0.629, 1.544);
     const double reduction = (1.468 + previousTimeReduction) / (2.284 * timeReduction);
