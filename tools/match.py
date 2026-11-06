@@ -584,16 +584,14 @@ def main():
               f"LLR leaves ({-SPRT_BOUND:.2f}, {SPRT_BOUND:.2f})")
     print(f"  {'openings':<16}{openings_desc}")
     print(f"  {'engines':<16}{args.name1}: {args.e1} {' '.join(args.opt1 or [])}   |   {args.name2}: {args.e2} {' '.join(args.opt2 or [])}")
-    # Progress is printed at most 40 times, when the completed pairs reach a round number of games (every 2, 10, 50,
-    # 100, 500, ... games), or every 100 games for an SPRT, whose length is unknown, and once more at the end.  Every
-    # column counts the completed pairs only, the games the Elo is computed from: the first game of a pair still in
-    # play would weigh one colour more than the other.
+    # Progress is printed when the completed pairs reach a round number of games, every 2, 10, 50 or 100 games: the
+    # most often that makes at most 40 rows, but at least every 100 games, and once more at the end.  Every column
+    # counts the completed pairs only, the games the Elo is computed from: the first game of a pair still in play
+    # would weigh one colour more than the other.
     step, five = 1, True
-    while total / step > 40:
+    while total / step > 40 and step < 100:
         step *= 5 if five else 2
         five = not five
-    if args.sprt:
-        step = min(step, 100)
     if step % 2:
         step *= 2
     print(f"\n  {'games':>12}  {'W':>5}  {'L':>5}  {'D':>5}  {'score':>6}  {'elo':>15}{'     LLR' if args.sprt else ''}  "
